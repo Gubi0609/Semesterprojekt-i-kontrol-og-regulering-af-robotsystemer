@@ -8,11 +8,15 @@ constexpr int    COUNTS_PER_REV  = 2048;
 constexpr double COUNTS_TO_RAD   = (2.0 * M_PI) / COUNTS_PER_REV;
 
 // Motor voltage limits
+// Qube-Servo 3 amp internally clips at 15V. Analog output range is ±10V.
+// PWM mode maps ±1 to ±24V, but firmware limits to 15V.
+// Using analog output: safe to command up to ±10V (hardware clamps the rest).
 constexpr double V_MAX = 10.0;
 
 // Arm angle safety limit (radians) — prevent hitting endstop
-constexpr double ARM_LIMIT_RAD     = 75.0 * M_PI / 180.0;
-constexpr double ARM_SOFT_ZONE_RAD = 30.0 * M_PI / 180.0;
+// mu=8 + 80° limit worked before without detaching
+constexpr double ARM_LIMIT_RAD     = 80.0 * M_PI / 180.0;
+constexpr double ARM_SOFT_ZONE_RAD = 35.0 * M_PI / 180.0;
 
 struct QubeState {
     double theta;      // motor/arm angle [rad]

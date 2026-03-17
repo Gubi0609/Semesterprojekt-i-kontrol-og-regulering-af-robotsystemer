@@ -1,8 +1,8 @@
 {
   "counts_per_rev": 2048,
   "counts_to_rad": 0.003068,
-  "pendulum_offset_counts": -1026,
-  "pendulum_offset_deg": -180.4,
+  "pendulum_offset_counts": 0,
+  "pendulum_offset_deg": 0.0,
   "pendulum_sign_flip": 1,
-  "notes": "alpha=0 is upright, alpha=+pi is hanging down. Formula: alpha = (enc - offset) * sign_flip * counts_to_rad. CPR=2048 (512 lines x 4X quadrature). Calibrated with pendulum zeroed at hanging-down, -1026 counts = upright."
+  "notes": "Encoder zero = hanging down (rest). 180 deg = upright. No offset needed. CPR=2048 (512 lines x 4X quadrature)."
 }

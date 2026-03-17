@@ -10,7 +10,9 @@
 
 static constexpr int    COUNTS_PER_REV = 2048;
 static constexpr double COUNTS_TO_DEG  = 360.0 / COUNTS_PER_REV;
-static constexpr int    PEND_OFFSET    = -1026;
+// No count offset. Encoder zero = hanging down, 180° = upright.
+// "pend(cal)" shows angle from upright: 0° = upright, ±180° = down.
+static constexpr double PEND_OFFSET_DEG = 180.0;
 
 static double now_sec() {
     struct timespec ts;
@@ -56,7 +58,7 @@ int main(int argc, char** argv) {
             double rate      = samples / elapsed;
             double motor_deg = buf[0] * COUNTS_TO_DEG;
             double pend_deg  = buf[1] * COUNTS_TO_DEG;
-            double pend_cal  = (buf[1] - PEND_OFFSET) * COUNTS_TO_DEG;
+            double pend_cal  = buf[1] * COUNTS_TO_DEG - PEND_OFFSET_DEG;
             printf("%7.2fs  %7.0fHz  %8.2f°  %8.2f°  %8.2f°\n",
                    elapsed, rate, motor_deg, pend_deg, pend_cal);
             t_print = now;

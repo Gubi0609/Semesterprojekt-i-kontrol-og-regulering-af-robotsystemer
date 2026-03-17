@@ -17,9 +17,13 @@
 #include <ctime>
 #include <fstream>
 
-// ─── Calibration (from calibration.json) ───────────────────────────
-static constexpr int    PEND_OFFSET_COUNTS = -1026;
-static constexpr int    PEND_SIGN_FLIP     = 1;
+// ─── Calibration ───────────────────────────────────────────────────
+// Encoder zero = hanging down (rest). 180 deg (pi rad) = upright.
+// Controller convention: alpha=0 is upright, alpha=±pi is down.
+// Transform: alpha_controller = encoder_rad - pi
+//   At rest (enc=0):      alpha = -pi  (down) ✓
+//   At upright (enc=pi):  alpha = 0           ✓
+static constexpr double PEND_OFFSET_RAD = M_PI;
 
 // ─── Filtered differentiator for velocity estimation ───────────────
 struct VelocityFilter {
@@ -140,7 +144,7 @@ int main(int argc, char** argv) {
         hil_read_encoder(card, enc_ch, 2, enc_buf);
 
         double theta = enc_buf[0] * COUNTS_TO_RAD;
-        double alpha = (enc_buf[1] - PEND_OFFSET_COUNTS) * PEND_SIGN_FLIP * COUNTS_TO_RAD;
+        double alpha = wrap_angle(-(enc_buf[1] * COUNTS_TO_RAD - PEND_OFFSET_RAD));
 
         double theta_dot = theta_filt.update(theta);
         double alpha_dot = alpha_filt.update(alpha);
