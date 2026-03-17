@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+logs/
+plots/
+*.csv
+
+# C++ build artifacts
+cpp/run_sim
+cpp/run_hardware
+cpp/read_fast
+cpp/*.o
