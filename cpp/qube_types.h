@@ -14,9 +14,8 @@ constexpr double COUNTS_TO_RAD   = (2.0 * M_PI) / COUNTS_PER_REV;
 constexpr double V_MAX = 10.0;
 
 // Arm angle safety limit (radians) — prevent hitting endstop
-// mu=8 + 80° limit worked before without detaching
-constexpr double ARM_LIMIT_RAD     = 80.0 * M_PI / 180.0;
-constexpr double ARM_SOFT_ZONE_RAD = 35.0 * M_PI / 180.0;
+constexpr double ARM_LIMIT_RAD     = 60.0 * M_PI / 180.0;
+constexpr double ARM_SOFT_ZONE_RAD = 30.0 * M_PI / 180.0;
 
 struct QubeState {
     double theta;      // motor/arm angle [rad]

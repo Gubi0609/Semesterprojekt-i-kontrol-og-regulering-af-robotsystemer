@@ -51,7 +51,7 @@ struct BalanceController {
 
 struct SwingUpController {
     QubeParams p;
-    double mu             = 8.0;    // mu=8 got to 34° from upright without detaching
+    double mu             = 8.0;
     double catch_angle    = 20.0 * M_PI / 180.0;
     double arm_limit      = ARM_LIMIT_RAD;
     double arm_soft_zone  = ARM_SOFT_ZONE_RAD;
