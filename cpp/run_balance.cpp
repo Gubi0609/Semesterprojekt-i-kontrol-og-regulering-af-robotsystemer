@@ -2,9 +2,12 @@
 // No swing-up — manually hold the pendulum upright, then let go.
 // The controller engages when alpha is within the catch zone.
 //
+// Uses hardware tachometers (72MHz, 32-bit) for velocity instead of
+// software differentiation — cleaner signal, no filter lag.
+//
 // Build:  g++ -O2 -std=c++17 -I/usr/include/quanser -o run_balance run_balance.cpp -lhil -lquanser_common -lm
 // Run:    ./run_balance
-//         ./run_balance --duration 30 --catch 30
+//         ./run_balance --duration 30 --catch 30 --rate 1000
 
 #include "qube_types.h"
 #include "controllers.h"
@@ -20,26 +23,9 @@
 
 static constexpr double PEND_OFFSET_RAD = M_PI;
 
-struct VelocityFilter {
-    double rc_alpha, prev_x, filtered;
-    double dt;
-    bool init;
-
-    VelocityFilter(double cutoff_hz, double dt_) : dt(dt_), init(false), prev_x(0), filtered(0) {
-        double rc = 1.0 / (2.0 * M_PI * cutoff_hz);
-        rc_alpha = rc / (rc + dt);
-    }
-
-    double update(double x) {
-        if (!init) { prev_x = x; init = true; return 0.0; }
-        double raw = (x - prev_x) / dt;
-        prev_x = x;
-        filtered = rc_alpha * filtered + (1.0 - rc_alpha) * raw;
-        return filtered;
-    }
-
-    void reset() { prev_x = 0; filtered = 0; init = false; }
-};
+// Hardware tachometer channels (from QUARC docs)
+// Units: counts/s, based on 72MHz counter, 32-bit
+static constexpr t_uint32 TACHO_CHANNELS[] = {14000, 14001}; // motor, pendulum
 
 static void sleep_until(struct timespec* next) {
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, next, nullptr);
@@ -54,13 +40,14 @@ static void sigint_handler(int) { g_running = false; }
 
 int main(int argc, char** argv) {
     double duration   = 60.0;
-    double dt         = 0.002;
-    double catch_deg  = 30.0;   // engage when within this many degrees of upright
-    double bail_deg   = 45.0;   // disengage if it falls past this
+    double dt         = 0.001;  // 1 kHz default (was 500 Hz)
+    double catch_deg  = 30.0;
+    double bail_deg   = 45.0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--duration") && i+1 < argc) duration = atof(argv[++i]);
         else if (!strcmp(argv[i], "--dt") && i+1 < argc)  dt = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--rate") && i+1 < argc) dt = 1.0 / atof(argv[++i]);
         else if (!strcmp(argv[i], "--catch") && i+1 < argc) catch_deg = atof(argv[++i]);
         else if (!strcmp(argv[i], "--bail") && i+1 < argc) bail_deg = atof(argv[++i]);
     }
@@ -85,8 +72,6 @@ int main(int argc, char** argv) {
     hil_set_encoder_counts(card, enc_ch, 2, zero);
 
     BalanceController balance(dt);
-    VelocityFilter theta_filt(50.0, dt);
-    VelocityFilter alpha_filt(50.0, dt);
 
     std::ofstream csv("balance_output.csv");
     csv << "t,theta,alpha,theta_dot,alpha_dot,voltage,active\n";
@@ -95,6 +80,8 @@ int main(int argc, char** argv) {
     long dt_ns  = static_cast<long>(dt * 1e9);
 
     printf("=== Balance-Only Mode ===\n");
+    printf("Using hardware tachometers for velocity.\n");
+    printf("Control rate: %.0f Hz (dt=%.4fs)\n", 1.0/dt, dt);
     printf("Hold pendulum upright and let go.\n");
     printf("Controller engages when |alpha| < %.0f deg.\n", catch_deg);
     printf("Ctrl+C to stop. Duration: %.0fs\n\n", duration);
@@ -103,6 +90,7 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &t_next);
 
     t_int32  enc_buf[2];
+    t_double tacho_buf[2];
     t_double aout_buf[1] = {0.0};
     bool active = false;
     bool printed_waiting = false;
@@ -110,31 +98,29 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n_steps && g_running; i++) {
         double t = i * dt;
 
+        // Read positions (encoders) and velocities (hardware tachometers)
         hil_read_encoder(card, enc_ch, 2, enc_buf);
+        hil_read_other(card, TACHO_CHANNELS, 2, tacho_buf);
 
-        double theta     = enc_buf[0] * COUNTS_TO_RAD;
-        double alpha     = wrap_angle(-(enc_buf[1] * COUNTS_TO_RAD - PEND_OFFSET_RAD));
-        double theta_dot = theta_filt.update(theta);
-        double alpha_dot = alpha_filt.update(alpha);
+        double theta = enc_buf[0] * COUNTS_TO_RAD;
+        double alpha = wrap_angle(-(enc_buf[1] * COUNTS_TO_RAD - PEND_OFFSET_RAD));
+
+        // Tachometers give counts/s — convert to rad/s
+        // Sign flip on alpha_dot to match the alpha sign flip
+        double theta_dot = tacho_buf[0] * COUNTS_TO_RAD;
+        double alpha_dot = -tacho_buf[1] * COUNTS_TO_RAD;
 
         QubeState s = {theta, alpha, theta_dot, alpha_dot};
         double voltage = 0.0;
 
         if (!active) {
-            // Waiting for manual placement
             if (fabs(alpha) < catch_rad) {
                 active = true;
                 balance.reset();
-                theta_filt.reset();
-                alpha_filt.reset();
-                // Re-read to get clean derivatives
-                theta_dot = 0.0;
-                alpha_dot = 0.0;
                 printf("  [%.2fs] ACTIVE! alpha=%.1f deg — balancing\n",
                        t, alpha * 180.0 / M_PI);
             } else {
-                // Print waiting message once per second
-                if (!printed_waiting || (i % 500 == 0)) {
+                if (!printed_waiting || (i % (int)(1.0/dt) == 0)) {
                     printf("  [%.1fs] Waiting... alpha=%.1f deg (need < %.0f deg)\r",
                            t, alpha * 180.0 / M_PI, catch_deg);
                     fflush(stdout);
@@ -142,7 +128,6 @@ int main(int argc, char** argv) {
                 }
             }
         } else {
-            // Balancing
             voltage = balance.compute(s);
 
             if (fabs(alpha) > bail_rad) {
@@ -167,7 +152,6 @@ int main(int argc, char** argv) {
         sleep_until(&t_next);
     }
 
-    // Safe shutdown
     printf("\nShutting down...\n");
     aout_buf[0] = 0.0;
     hil_write_analog(card, aout_ch, 1, aout_buf);
