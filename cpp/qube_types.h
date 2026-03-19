@@ -46,13 +46,13 @@ struct QubeState {
 // simulation (plant.h) and the swing-up energy calculation.
 // Values are from the Quanser Qube-Servo 3 datasheet.
 struct QubeParams {
-    double Rm   = 8.4;       // Motor terminal resistance [Ohm]
+    double Rm   = 7.5;       // Motor terminal resistance [Ohm] (Qube-Servo 3 user manual Table 2.2)
     double km   = 0.042;     // Motor torque constant = back-EMF constant [N·m/A = V·s/rad]
     double Jr   = 4.0e-6;    // Rotor (motor hub) moment of inertia [kg·m²]
     double Lr   = 0.0826;    // Arm length from motor shaft to pendulum pivot [m]
     double Dr   = 0.0;       // Arm viscous damping coefficient [N·m·s/rad]
     double mp   = 0.024;     // Pendulum mass [kg]
-    double Lp   = 0.129;     // Pendulum total length (pivot to tip) [m]
+    double Lp   = 0.129;     // Pendulum total length (pivot to tip) [m] — TODO: measure! Datasheet says 9.5cm, workbook says 12.9cm
     double Jp   = 3.33e-5;   // Pendulum moment of inertia about pivot [kg·m²]
     double Dp   = 0.0;       // Pendulum viscous damping coefficient [N·m·s/rad]
     double g    = 9.81;      // Gravitational acceleration [m/s²]
