@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
     // ── Create controllers ─────────────────────────────────────────
     QubeParams params;
     BalanceController balance(dt);       // needs dt for integral term
-    SwingUpController swing_up(params);  // needs physical params for energy calc
+    SwingUpController swing_up(params, dt);  // needs physical params + dt for energy calc
 
     // Start in swing-up mode — the pendulum begins hanging down.
     enum Mode { SWING_UP, BALANCE } mode = SWING_UP;

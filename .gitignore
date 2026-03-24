@@ -7,5 +7,11 @@ plots/
 # C++ build artifacts
 cpp/run_sim
 cpp/run_hardware
+cpp/run_balance
+cpp/run_gui
+cpp/run_gui_hw
+cpp/run_tests
+cpp/analyze_csv
 cpp/read_fast
 cpp/*.o
+cpp/imgui.ini

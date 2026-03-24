@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     State x = {0.0, initial_alpha, 0.0, 0.0};
 
     BalanceController balance(dt);
-    SwingUpController swing_up(params);
+    SwingUpController swing_up(params, dt);
 
     enum Mode { SWING_UP, BALANCE };
     Mode mode = near_upright ? BALANCE : SWING_UP;
