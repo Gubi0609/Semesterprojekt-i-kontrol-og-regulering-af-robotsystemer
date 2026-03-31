@@ -37,6 +37,9 @@ run_balance: run_balance.cpp controllers.h qube_types.h
 read_fast: read_fast.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(HIL_LIBS)
 
+run_friction_test: run_friction_test.cpp qube_types.h
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(HIL_LIBS)
+
 # ── GUI: simulation mode (no Quanser SDK) ───────────────────
 run_gui: run_gui.cpp controllers.h qube_types.h plant.h render3d.h $(GUI_SRCS)
 	$(CXX) $(CXXFLAGS) $(GUI_INC) -o $@ run_gui.cpp $(GUI_SRCS) $(LDFLAGS) $(GUI_LIBS)
@@ -70,4 +73,4 @@ tests: run_tests
 	./run_tests
 
 clean:
-	rm -f run_sim run_hardware run_balance read_fast run_gui run_gui_hw run_tests analyze_csv *.csv
+	rm -f run_sim run_hardware run_balance read_fast run_friction_test run_gui run_gui_hw run_tests analyze_csv *.csv
