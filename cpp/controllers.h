@@ -1,261 +1,276 @@
 #pragma once
 // ═══════════════════════════════════════════════════════════════════
-// controllers.h — Balance and swing-up controllers
+// controllers.h — Parallel PID balance + energy-based swing-up
 // ═══════════════════════════════════════════════════════════════════
+//
+// The balance controller uses two parallel PID loops whose outputs
+// are summed into a single motor voltage:
+//
+//   u = PID_alpha(0 - α) + PID_theta(0 - θ)
+//
+//   Alpha PID: aggressive — keeps the pendulum upright (primary)
+//   Theta PID: gentle — nudges the arm back toward center (secondary)
+//
+// This is equivalent to PD control on each DOF with an integral on
+// alpha for steady-state correction. It maps directly onto classical
+// PID theory — each loop can be tuned and analysed independently
+// using root locus, Bode plots, etc.
 
 #include "qube_types.h"
 #include <cmath>
 
 // ─── Deadband compensation ─────────────────────────────────────────
-// The Qube-Servo 3 amplifier has a ~0.3V deadband near zero voltage.
-// Any command below this threshold produces zero torque at the motor.
-// To compensate, we add 0.3V to any nonzero command so the motor
-// receives the intended voltage. Near-zero commands (|u| < 0.01V)
-// are treated as exactly zero to avoid jitter.
-inline double compensate_deadband(double u, double deadband = 0.3) {
-    if (u > 0.01)       return u + deadband;
-    else if (u < -0.01) return u - deadband;
+// The motor amplifier has a ~0.3V deadband. Any command below that
+// produces zero torque. We add the offset only when the command is
+// large enough to be intentional (threshold), so encoder noise
+// near zero doesn't get amplified into ±0.3V jitter.
+inline double compensate_deadband(double u, double deadband = 0.3,
+                                  double threshold = 0.15) {
+    if (u > threshold)        return u + deadband;
+    else if (u < -threshold)  return u - deadband;
     return 0.0;
 }
 
+// ─── Single PID block ──────────────────────────────────────────────
+// Reusable PID with anti-windup clamping and filtered derivative.
+// The derivative uses a first-order low-pass filter to suppress
+// high-frequency noise:  D_filt = α·D_raw + (1-α)·D_prev
+// where α = dt / (Tf + dt).  Tf = derivative filter time constant.
+struct PID {
+    double Kp = 0.0;
+    double Ki = 0.0;
+    double Kd = 0.0;
+
+    double integral       = 0.0;
+    double prev_error     = 0.0;
+    double prev_deriv     = 0.0;
+    double integral_limit = 1e6;  // anti-windup clamp
+    double output_limit   = 1e6;  // clamp final output
+    double Tf             = 0.01; // derivative filter time constant [s]
+    bool   first_call     = true;
+
+    void reset() {
+        integral   = 0.0;
+        prev_error = 0.0;
+        prev_deriv = 0.0;
+        first_call = true;
+    }
+
+    double compute(double error, double dt) {
+        // Proportional
+        double P = Kp * error;
+
+        // Integral with anti-windup
+        integral += error * dt;
+        integral = clamp(integral, -integral_limit, integral_limit);
+        double I = Ki * integral;
+
+        // Filtered derivative
+        double D = 0.0;
+        if (!first_call) {
+            double raw_deriv = (error - prev_error) / dt;
+            double alpha = dt / (Tf + dt);
+            double filt_deriv = alpha * raw_deriv + (1.0 - alpha) * prev_deriv;
+            prev_deriv = filt_deriv;
+            D = Kd * filt_deriv;
+        }
+        prev_error = error;
+        first_call = false;
+
+        double out = P + I + D;
+        return clamp(out, -output_limit, output_limit);
+    }
+};
+
 // ═══════════════════════════════════════════════════════════════════
-// Balance Controller — keeps the pendulum upright
+// Balance Controller — Parallel PID
 // ═══════════════════════════════════════════════════════════════════
 //
-// Uses full state feedback (derived from LQR optimal control):
+//   u = PID_alpha(0 - α) + PID_theta(0 - θ)
 //
-//   u = -k_theta·θ - k_alpha·α - k_theta_dot·θ̇ - k_alpha_dot·α̇ - k_integral·∫α
+// Alpha PID (pendulum stabilisation):
+//   Kp — counteracts pendulum tilt (main balancing force)
+//   Ki — eliminates steady-state offset from friction/model error
+//   Kd — damps pendulum oscillation, prevents overshoot
 //
-// Each gain has a physical role:
-//   k_alpha     (20.0) — proportional: pushes arm to counteract pendulum tilt
-//   k_alpha_dot  (2.0) — derivative: damps pendulum oscillation, prevents overshoot
-//   k_theta     (-2.0) — proportional: pulls arm back toward center (θ=0)
-//   k_theta_dot (-1.0) — derivative: damps arm motion
-//   k_integral   (0.3) — integral: slowly corrects steady-state offset from friction
+// Theta PID (arm centering):
+//   Kp — pulls arm back toward center
+//   Kd — damps arm motion to avoid overshoot
+//   Ki — typically zero (arm centering is not critical)
 //
-// Gains were found by sweeping ~500 combinations in simulation and
-// selecting the set with: zero overshoot, ≤2 zero crossings, and
-// fastest settling time.
+// Starting gains are based on the original LQR state-feedback gains
+// which are known to work on this hardware:
+//   k_alpha=20, k_alpha_dot=2, k_theta=-2, k_theta_dot=-1, ki=0.3
 //
-// Output is clamped to ±6V to prevent amplifier saturation, which
-// would cause aggressive overshoot on real hardware.
-//
-// Supports a "catch mode" with temporarily stronger arm centering
-// for the first few seconds after catching from swing-up. This
-// drives the arm back to center quickly before the pendulum can
-// fall due to being at an extreme arm angle.
+// The PID Kp/Kd map directly to these:
+//   alpha_pid.Kp ↔ k_alpha,  alpha_pid.Kd ↔ k_alpha_dot
+//   theta_pid.Kp ↔ k_theta,  theta_pid.Kd ↔ k_theta_dot
 
 struct BalanceController {
-    // State feedback gains — normal balancing
-    double k_theta     = -2.0;   // arm position → voltage [V/rad]
-    double k_alpha     = 20.0;   // pendulum position → voltage [V/rad]
-    double k_theta_dot = -1.0;   // arm velocity → voltage [V/(rad/s)]
-    double k_alpha_dot = 2.0;    // pendulum velocity → voltage [V/(rad/s)]
-    double k_integral  = 0.3;    // pendulum integral → voltage [V/(rad·s)]
+    // ── Alpha PI: pendulum angle → voltage (aggressive) ────────
+    // Only P+I here — the D term uses measured velocity directly.
+    PID alpha_pid;
 
-    // Catch mode: stronger arm centering right after catching
-    // DISABLED for debugging — using normal gains during catch
-    double k_theta_catch     = -2.0;   // same as normal (was -6.0)
-    double k_theta_dot_catch = -1.0;   // same as normal (was -3.0)
-    double catch_duration    = 2.0;    // seconds (no effect when gains match normal)
-    double catch_timer       = 0.0;
+    // ── Theta PI: arm angle → voltage (gentle) ────────────────
+    // NOTE: theta_pid.Kp is stored as a positive number but its
+    // contribution is ADDED (not subtracted) — see compute().
+    // When the arm drifts right (θ>0), we push voltage positive
+    // to move the base under the pendulum, not pull it back.
+    PID theta_pid;
 
-    double voltage_limit  = 6.0; // max output voltage [V]
-    double integral_limit = 0.2; // anti-windup: clamp integral state [rad·s]
+    // ── D gains applied to measured velocities ─────────────────
+    // Using tachometer readings (hardware) or simulation velocities
+    // instead of differentiating noisy encoder positions.
+    double alpha_Kd = 2.0;   // [V·s / rad] — damp pendulum oscillation
+    double theta_Kd = 1.0;   // [V·s / rad] — damp arm motion
 
-    double alpha_integral = 0.0; // accumulated ∫α·dt
-    double dt;                   // control period [s], needed for integration
+    double voltage_limit = 6.0;
+    double dt;
 
-    // Constructor — dt must match the actual loop period
-    explicit BalanceController(double dt_) : dt(dt_) {}
+    explicit BalanceController(double dt_) : dt(dt_) {
+        // ── Alpha PI (pendulum — primary) ──────────────────────
+        // Positive alpha (tilt right) → negative voltage to push
+        // arm left and counteract tilt. PID error = (0 - α) < 0
+        // so output is negative. Correct.
+        alpha_pid.Kp = 20.0;   // [V / rad]
+        alpha_pid.Ki = 0.3;    // [V / (rad·s)] — steady-state correction
+        alpha_pid.Kd = 0.0;    // D handled separately via measured velocity
+        alpha_pid.integral_limit = 0.2;  // anti-windup [rad·s]
+        alpha_pid.output_limit   = voltage_limit;
 
-    // Compute motor voltage from current state.
-    // Returns voltage in [-voltage_limit, +voltage_limit].
+        // ── Theta PI (arm — secondary) ─────────────────────────
+        // This is NOT a centering controller. It moves the base
+        // under the pendulum. The sign is handled in compute():
+        // we SUBTRACT theta_pid output instead of adding it.
+        theta_pid.Kp = 2.0;    // [V / rad]
+        theta_pid.Ki = 0.0;    // no integral needed for arm
+        theta_pid.Kd = 0.0;    // D handled separately via measured velocity
+        theta_pid.integral_limit = 0.5;
+        theta_pid.output_limit   = voltage_limit;
+    }
+
     double compute(const QubeState& s) {
-        // Accumulate integral of alpha (with anti-windup clamp)
-        alpha_integral += s.alpha * dt;
-        alpha_integral = clamp(alpha_integral, -integral_limit, integral_limit);
+        // ── P + I from alpha (pendulum) ────────────────────────
+        // error = (0 - alpha): positive alpha → negative error → negative output
+        // This pushes the arm to counteract the tilt. ✓
+        double alpha_error = 0.0 - s.alpha;
+        double u_alpha = alpha_pid.compute(alpha_error, dt);
 
-        // Choose arm centering gains based on catch mode
-        double kt, ktd;
-        if (catch_timer > 0) {
-            // Catch mode: blend from aggressive to normal over catch_duration.
-            // At catch_timer = catch_duration → full catch gains.
-            // At catch_timer = 0 → normal gains.
-            double blend = catch_timer / catch_duration;
-            kt  = k_theta     + blend * (k_theta_catch     - k_theta);
-            ktd = k_theta_dot + blend * (k_theta_dot_catch - k_theta_dot);
-            catch_timer -= dt;
-            if (catch_timer < 0) catch_timer = 0;
-        } else {
-            kt  = k_theta;
-            ktd = k_theta_dot;
-        }
+        // ── P + I from theta (arm) ────────────────────────────
+        // The original LQR had: u += -k_theta * theta, with k_theta = -2.0
+        // i.e. u += +2.0 * theta.  When theta > 0, voltage increases.
+        //
+        // PID computes: Kp * (0 - theta) = -2.0 * theta (wrong sign!)
+        // Fix: subtract instead of add, so we get -(-2.0 * theta) = +2.0 * theta. ✓
+        double theta_error = 0.0 - s.theta;
+        double u_theta = theta_pid.compute(theta_error, dt);
 
-        // Full state feedback: u = -K·x - ki·∫α
-        double u = -kt          * s.theta
-                   - k_alpha     * s.alpha
-                   - ktd         * s.theta_dot
-                   - k_alpha_dot * s.alpha_dot
-                   - k_integral  * alpha_integral;
+        // ── D from measured velocities (no differentiation) ───
+        // Alpha: negative feedback. Positive alpha_dot → oppose it.
+        //   Original: u += -k_alpha_dot * alpha_dot = -2.0 * alpha_dot  ✓
+        double u_alpha_d = -alpha_Kd * s.alpha_dot;
 
-        // Add deadband offset so the motor actually moves
+        // Theta: positive feedback on velocity (moves base under pendulum).
+        //   Original: u += -k_theta_dot * theta_dot, with k_theta_dot = -1.0
+        //   i.e. u += +1.0 * theta_dot.  ✓
+        double u_theta_d = +theta_Kd * s.theta_dot;
+
+        // Sum: alpha terms are normal PID, theta terms have inverted sign
+        double u = u_alpha - u_theta + u_alpha_d + u_theta_d;
+
+        // Deadband compensation
         u = compensate_deadband(u);
 
         // Clamp to prevent saturation
         return clamp(u, -voltage_limit, voltage_limit);
     }
 
-    // Reset integral state and activate catch mode.
-    // Called when switching from swing-up to balance.
     void reset() {
-        alpha_integral = 0.0;
-        catch_timer = catch_duration;  // activate aggressive centering
+        alpha_pid.reset();
+        theta_pid.reset();
     }
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// Swing-Up Controller — gets the pendulum from hanging to upright
+// Swing-Up Controller — energy-based bang-bang (Åström)
 // ═══════════════════════════════════════════════════════════════════
 //
-// Uses Åström's energy-based method:
+// How it works:
 //
-// 1. Compute the pendulum's total mechanical energy relative to the
-//    upright equilibrium:
-//      E = ½·Jp·α̇² - mp·g·(Lp/2)·(cos(α) - 1)
-//    At upright with zero velocity, E = 0.
-//    Hanging down at rest, E < 0 (we need to add energy).
+//   1. Compute the pendulum's energy relative to upright:
+//        E = ½·Jp·α̇² - mp·g·(Lp/2)·(cos(α) - 1)
+//      E = 0 at upright rest, E < 0 when hanging.
 //
-// 2. Apply motor voltage in the direction that transfers energy
-//    into the pendulum. The optimal direction is:
-//      sign(E · α̇ · cos(α))
-//    This naturally adds energy when E < 0 and removes it when E > 0,
-//    converging the pendulum toward the upright energy level.
+//   2. Pick motor voltage direction using Åström's law:
+//        direction = sign(E · α̇ · cos(α))
+//      This adds energy when E < 0 and removes when E > 0.
 //
-// 3. Once |α| < catch_angle (20°), hand off to the balance controller.
+//   3. Apply constant magnitude ±mu (bang-bang).
 //
-// Safety features:
-//   - Velocity deadzone: no output when pendulum is barely moving
-//     (prevents violent chattering from sign flips near α̇ ≈ 0)
-//   - Arm angle protection: three zones prevent hitting the endstop
-//     (see compute() for details)
-
+//   4. When |α| < catch_angle, hand off to balance controller.
+//
+// Arm safety: hard brake if arm exceeds limit.
+//
 struct SwingUpController {
-    QubeParams p;             // physical parameters (for energy calculation)
-    double mu             = 5.0;    // max voltage amplitude [V] — energy-scaled, not bang-bang
-    double catch_angle    = 20.0 * M_PI / 180.0;  // hand off to balance when |α| < this [rad]
-    double arm_limit      = ARM_LIMIT_RAD;         // hard arm limit [rad] (from qube_types.h)
-    double arm_soft_zone  = ARM_SOFT_ZONE_RAD;     // braking starts this far before limit [rad]
-    double arm_brake_gain = 10.0;   // proportional gain for arm braking [V/rad]
-    double vel_deadzone   = 0.1;    // ignore α̇ below this [rad/s] (lowered — see initial kick)
-    double initial_kick   = 0.8;    // small voltage applied when pendulum is nearly still [V]
-    double kick_duration  = 0.5;    // how long to apply the kick [s]
-    double kick_timer     = 0.0;    // counts up from 0
+    QubeParams p;
 
-    double dt;  // control period [s], needed for kick timer
+    double mu             = 1.5;    // bang-bang voltage magnitude [V]
+    double catch_angle    = 20.0 * M_PI / 180.0;  // hand off threshold [rad]
+    double arm_limit      = ARM_LIMIT_RAD;         // hard arm limit [rad]
+    double arm_soft_start = 70.0 * M_PI / 180.0;   // start tapering here [rad]
+    double arm_brake_gain = 10.0;   // braking P gain [V/rad]
+    double vel_deadzone   = 0.1;    // ignore α̇ below this [rad/s]
+    double initial_kick   = 0.8;    // voltage to get pendulum moving [V]
+    double kick_duration  = 0.5;    // how long to kick [s]
+    double kick_timer     = 0.0;
+
+    double dt;
 
     SwingUpController(const QubeParams& params, double dt_) : p(params), dt(dt_) {}
 
-    // Compute motor voltage from current state.
-    // Arm protection takes priority over swing-up.
     double compute(const QubeState& s) {
-        double hLp = p.half_Lp();  // half pendulum length (center of mass)
-
         double abs_theta = fabs(s.theta);
 
-        // ── ZONE 1: Hard limit ─────────────────────────────────────
-        // Arm is past the limit — override everything with strong
-        // restoring force + velocity damping to push it back.
+        // ── Arm safety: hard brake if past limit ───────────────
         if (abs_theta > arm_limit) {
             return clamp(-arm_brake_gain * s.theta - 4.0 * s.theta_dot,
                          -V_MAX, V_MAX);
         }
 
-        // ── ZONE 2: Soft braking zone ──────────────────────────────
-        // Arm is approaching the limit. Taper the swing-up voltage
-        // quadratically (scale²) and blend in a restoring force.
-        // If swing-up would push arm further out, suppress it to 10%.
-        if (abs_theta > (arm_limit - arm_soft_zone)) {
-            // scale = 1.0 at the inner edge, 0.0 at the hard limit
-            double scale = (arm_limit - abs_theta) / arm_soft_zone;
-            scale = clamp(scale, 0.0, 1.0);
-            scale = scale * scale;  // quadratic: brakes harder near limit
-
-            // Compute what swing-up wants to do
-            double u_swing = energy_pump(s, hLp);
-
-            // If swing-up would push arm further toward the endstop,
-            // reduce it to 10% of the already-tapered value
-            bool pushing_out = (u_swing > 0) == (s.theta > 0);
-            if (pushing_out) scale *= 0.1;
-
-            // Restoring force: spring + damper pulling arm back to center
-            double u_restore = -arm_brake_gain * s.theta - 2.0 * s.theta_dot;
-
-            // Blend: mostly restoring near limit, mostly swing-up near center
-            return clamp(scale * u_swing + (1.0 - scale) * u_restore,
-                         -V_MAX, V_MAX);
-        }
-
-        // ── ZONE 3: Safe zone ──────────────────────────────────────
-        // Arm is well within limits — full swing-up authority.
-        return clamp(energy_pump(s, hLp), -V_MAX, V_MAX);
-    }
-
-    // Check if pendulum is close enough to upright for the balance
-    // controller to take over.
-    bool should_catch(double alpha) const {
-        return fabs(alpha) < catch_angle;
-    }
-
-private:
-    // Core energy pumping calculation.
-    // Returns a signed voltage that either adds or removes energy
-    // from the pendulum to drive it toward the upright equilibrium.
-    //
-    // Unlike pure bang-bang (±mu), this scales the voltage proportionally
-    // to the normalised energy error: small error → gentle push,
-    // large error → stronger push (capped at mu). This makes the
-    // approach to the catch zone much smoother and reduces the risk
-    // of the magnetic pendulum detaching.
-    double energy_pump(const QubeState& s, double hLp) {
-        // Pendulum energy relative to upright equilibrium:
-        //   E = 0 at upright rest, E < 0 when hanging, E > 0 if overshooting
-        double E = 0.5 * p.Jp * s.alpha_dot * s.alpha_dot
-                 - p.mp * p.g * hLp * (cos(s.alpha) - 1.0);
-
-        // Reference energy (hanging down at rest) for normalisation
-        double E_ref = p.mp * p.g * hLp * 2.0;  // = -E when α=π, α̇=0 → positive
-
-        // ── Initial kick: get pendulum moving from rest ────────────
-        // When α̇ is tiny and we haven't been running long, apply a
-        // small constant voltage so the user doesn't have to nudge.
+        // ── Initial kick: get pendulum moving from rest ────────
         if (fabs(s.alpha_dot) < vel_deadzone) {
             if (kick_timer < kick_duration) {
                 kick_timer += dt;
                 return compensate_deadband(initial_kick);
             }
-            return 0.0;  // kick expired and still no motion — wait
+            return 0.0;
         }
-
-        // Once we see real motion, the kick has done its job
         kick_timer = kick_duration;
 
-        // ── Energy-proportional control ────────────────────────────
-        // Normalise energy error to [0, 1] range (clamped).
-        // |E|/E_ref ≈ 0 near upright, ≈ 1 when hanging.
-        double E_norm = clamp(fabs(E) / E_ref, 0.0, 1.0);
+        // ── Energy calculation ─────────────────────────────────
+        double hLp = p.half_Lp();
+        double E = 0.5 * p.Jp * s.alpha_dot * s.alpha_dot
+                 - p.mp * p.g * hLp * (cos(s.alpha) - 1.0);
 
-        // Voltage magnitude: proportional to energy error.
-        // Minimum 20% of mu so we always make progress, max 100%.
-        double u_mag = mu * (0.2 + 0.8 * E_norm);
-
-        // Direction: sign(E · α̇ · cos α) — same Åström law
+        // ── Bang-bang: constant voltage, Åström direction ──────
         double direction = copysign(1.0, E * s.alpha_dot * cos(s.alpha));
+        double u = mu * direction;
 
-        double u = u_mag * direction;
+        // ── Soft braking near arm limit ────────────────────────
+        // Linearly taper swing-up and blend in restoring force
+        if (abs_theta > arm_soft_start) {
+            double scale = (arm_limit - abs_theta) / (arm_limit - arm_soft_start);
+            scale = clamp(scale, 0.0, 1.0);
+            // If pushing arm further out, suppress harder
+            if ((u > 0) == (s.theta > 0)) scale *= 0.1;
+            double u_restore = -arm_brake_gain * s.theta - 2.0 * s.theta_dot;
+            u = scale * u + (1.0 - scale) * u_restore;
+        }
 
-        // Add deadband compensation so the motor actually responds
-        return compensate_deadband(u);
+        return clamp(compensate_deadband(u), -V_MAX, V_MAX);
+    }
+
+    bool should_catch(double alpha) const {
+        return fabs(alpha) < catch_angle;
     }
 };

@@ -28,8 +28,8 @@ constexpr double V_MAX = 10.0;
 // Current settings: soft zone starts at 30°, hard limit at 60°.
 //   |--- full authority ---|-- taper + brake --|X hard brake
 //   0°                    30°                60°
-constexpr double ARM_LIMIT_RAD     = 60.0 * M_PI / 180.0;
-constexpr double ARM_SOFT_ZONE_RAD = 30.0 * M_PI / 180.0;
+constexpr double ARM_LIMIT_RAD     = 90.0 * M_PI / 180.0;
+constexpr double ARM_SOFT_ZONE_RAD = 20.0 * M_PI / 180.0;
 
 // ─── State vector ──────────────────────────────────────────────────
 // The complete observable state of the system at one instant.

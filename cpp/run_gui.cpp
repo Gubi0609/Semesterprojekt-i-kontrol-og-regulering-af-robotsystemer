@@ -78,9 +78,10 @@ struct SharedData {
     RollingBuffer hist_voltage, hist_energy;
 
     float mu = 5.0f, catch_angle = 20.0f, vel_deadzone = 0.1f, initial_kick = 0.8f;
-    float k_alpha = 20.0f, k_alpha_dot = 2.0f;
-    float k_theta = -2.0f, k_theta_dot = -1.0f;
-    float k_integral = 0.3f, voltage_limit = 6.0f;
+    // Parallel PID gains
+    float alpha_Kp = 20.0f, alpha_Ki = 0.3f, alpha_Kd = 2.0f;
+    float theta_Kp = 2.0f,  theta_Ki = 0.0f, theta_Kd = 1.0f;
+    float voltage_limit = 6.0f;
 
     SharedData() : hist_t(30000), hist_theta(30000), hist_alpha(30000),
                    hist_theta_dot(30000), hist_alpha_dot(30000),
@@ -143,11 +144,12 @@ void sim_control_thread(SharedData& sd) {
             swing_up.catch_angle  = sd.catch_angle * M_PI / 180.0;
             swing_up.vel_deadzone = sd.vel_deadzone;
             swing_up.initial_kick = sd.initial_kick;
-            balance.k_alpha       = sd.k_alpha;
-            balance.k_alpha_dot   = sd.k_alpha_dot;
-            balance.k_theta       = sd.k_theta;
-            balance.k_theta_dot   = sd.k_theta_dot;
-            balance.k_integral    = sd.k_integral;
+            balance.alpha_pid.Kp = sd.alpha_Kp;
+            balance.alpha_pid.Ki = sd.alpha_Ki;
+            balance.alpha_Kd = sd.alpha_Kd;
+            balance.theta_pid.Kp = sd.theta_Kp;
+            balance.theta_pid.Ki = sd.theta_Ki;
+            balance.theta_Kd = sd.theta_Kd;
             balance.voltage_limit = sd.voltage_limit;
         }
 
@@ -242,9 +244,10 @@ void hw_control_thread(SharedData& sd) {
         { std::lock_guard<std::mutex> lk(sd.mtx);
           swing_up.mu = sd.mu; swing_up.catch_angle = sd.catch_angle * M_PI/180;
           swing_up.vel_deadzone = sd.vel_deadzone; swing_up.initial_kick = sd.initial_kick;
-          balance.k_alpha = sd.k_alpha; balance.k_alpha_dot = sd.k_alpha_dot;
-          balance.k_theta = sd.k_theta; balance.k_theta_dot = sd.k_theta_dot;
-          balance.k_integral = sd.k_integral; balance.voltage_limit = sd.voltage_limit; }
+          balance.alpha_pid.Kp = sd.alpha_Kp; balance.alpha_pid.Ki = sd.alpha_Ki;
+          balance.alpha_Kd = sd.alpha_Kd; balance.theta_pid.Kp = sd.theta_Kp;
+          balance.theta_pid.Ki = sd.theta_Ki; balance.theta_Kd = sd.theta_Kd;
+          balance.voltage_limit = sd.voltage_limit; }
 
         hil_read_encoder(card, enc_ch, 2, enc_buf);
         hil_read_other(card, TACHO_CHANNELS, 2, tacho_buf);
@@ -526,14 +529,17 @@ int main(int argc, char** argv) {
         }
 
         ImGui::NextColumn();
-        ImGui::Text("Balance");
+        ImGui::Text("Balance — Alpha PID");
         {
             std::lock_guard<std::mutex> lk(sd.mtx);
-            ImGui::SliderFloat("k_a", &sd.k_alpha, 0.0f, 40.0f, "%.1f");
-            ImGui::SliderFloat("k_ad", &sd.k_alpha_dot, 0.0f, 10.0f, "%.1f");
-            ImGui::SliderFloat("k_t", &sd.k_theta, -10.0f, 0.0f, "%.1f");
-            ImGui::SliderFloat("k_td", &sd.k_theta_dot, -5.0f, 0.0f, "%.1f");
-            ImGui::SliderFloat("k_i", &sd.k_integral, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("aKp", &sd.alpha_Kp, 0.0f, 40.0f, "%.1f");
+            ImGui::SliderFloat("aKi", &sd.alpha_Ki, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("aKd", &sd.alpha_Kd, 0.0f, 10.0f, "%.1f");
+            ImGui::Spacing();
+            ImGui::Text("Balance — Theta PID");
+            ImGui::SliderFloat("tKp", &sd.theta_Kp, 0.0f, 10.0f, "%.1f");
+            ImGui::SliderFloat("tKi", &sd.theta_Ki, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("tKd", &sd.theta_Kd, 0.0f, 5.0f, "%.1f");
             ImGui::SliderFloat("Vlim", &sd.voltage_limit, 1.0f, 10.0f, "%.1f V");
         }
         ImGui::Columns(1);

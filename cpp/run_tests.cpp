@@ -86,9 +86,10 @@ struct SimConfig {
 
     // Controller gain overrides (use defaults if NaN)
     float mu = 5.0f;
-    float k_alpha = 20.0f, k_alpha_dot = 2.0f;
-    float k_theta = -2.0f, k_theta_dot = -1.0f;
-    float k_integral = 0.3f;
+
+    // Parallel PID gain overrides
+    float alpha_Kp = 20.0f, alpha_Ki = 0.3f, alpha_Kd = 2.0f;
+    float theta_Kp = 2.0f,  theta_Ki = 0.0f, theta_Kd = 1.0f;
     float voltage_limit = 6.0f;
 
     bool write_csv = false;
@@ -102,11 +103,12 @@ TestResult run_sim_test(const SimConfig& cfg) {
                cfg.initial_theta_dot, cfg.initial_alpha_dot};
 
     BalanceController balance(cfg.dt);
-    balance.k_alpha     = cfg.k_alpha;
-    balance.k_alpha_dot = cfg.k_alpha_dot;
-    balance.k_theta     = cfg.k_theta;
-    balance.k_theta_dot = cfg.k_theta_dot;
-    balance.k_integral  = cfg.k_integral;
+    balance.alpha_pid.Kp = cfg.alpha_Kp;
+    balance.alpha_pid.Ki = cfg.alpha_Ki;
+    balance.alpha_Kd = cfg.alpha_Kd;
+    balance.theta_pid.Kp = cfg.theta_Kp;
+    balance.theta_pid.Ki = cfg.theta_Ki;
+    balance.theta_Kd = cfg.theta_Kd;
     balance.voltage_limit = cfg.voltage_limit;
 
     SwingUpController swing_up(cfg.ctrl_params, cfg.dt);

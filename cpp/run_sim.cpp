@@ -17,7 +17,7 @@
 
 int main(int argc, char** argv) {
     double duration    = 10.0;
-    double dt          = 0.002;
+    double dt          = 0.001;
     bool   near_upright = false;
     int    substeps    = 10;
 
@@ -48,8 +48,9 @@ int main(int argc, char** argv) {
 
     printf("Simulation: %.1fs, dt=%.4fs, mode=%s\n",
            duration, dt, mode == SWING_UP ? "swing_up" : "balance");
-    printf("  Balance gains: k_theta=%.2f k_alpha=%.2f k_theta_dot=%.2f k_alpha_dot=%.2f\n",
-           balance.k_theta, balance.k_alpha, balance.k_theta_dot, balance.k_alpha_dot);
+    printf("  Parallel PID — Alpha: Kp=%.1f Ki=%.1f Kd=%.1f | Theta: Kp=%.1f Ki=%.1f Kd=%.1f\n",
+           balance.alpha_pid.Kp, balance.alpha_pid.Ki, balance.alpha_Kd,
+           balance.theta_pid.Kp, balance.theta_pid.Ki, balance.theta_Kd);
 
     for (int i = 0; i < n_steps; i++) {
         double t = i * dt;
@@ -79,8 +80,9 @@ int main(int argc, char** argv) {
             x = rk4_step(x, voltage, sub_dt, params);
         }
 
-        // Wrap angles
-        x[0] = wrap_angle(x[0]);
+        // Wrap alpha (pendulum) to [-π, π] but let theta (arm) accumulate.
+        // Wrapping theta causes discontinuities that destabilize the
+        // inner PID loop (sudden ±360° jumps in error).
         x[1] = wrap_angle(x[1]);
 
         // Log every sample
