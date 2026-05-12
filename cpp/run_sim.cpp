@@ -11,9 +11,15 @@
 
 #include <cstdio>
 #include <cstring>
+
+#define _USE_MATH_DEFINES // needed for M_PI on Windows
 #include <cmath>
 #include <fstream>
 #include <string>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846 // fallback if M_PI is not defined
+#endif
 
 int main(int argc, char** argv) {
     double duration    = 10.0;

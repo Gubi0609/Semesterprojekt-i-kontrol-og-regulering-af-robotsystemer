@@ -18,6 +18,11 @@
 
 #include <cstdio>
 #include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846 // fallback if M_PI is not defined
+#endif
+
 #include <cstring>
 #include <string>
 #include <vector>
