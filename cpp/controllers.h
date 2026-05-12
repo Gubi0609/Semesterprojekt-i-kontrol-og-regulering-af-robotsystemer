@@ -121,8 +121,15 @@ struct BalanceController {
     // ── D gains applied to measured velocities ─────────────────
     // Using tachometer readings (hardware) or simulation velocities
     // instead of differentiating noisy encoder positions.
-    double alpha_Kd = 2.0;   // [V·s / rad] — damp pendulum oscillation
-    double theta_Kd = 1.0;   // [V·s / rad] — damp arm motion
+    double alpha_Kd = 0.3296;   // [V·s / rad] — damp pendulum oscillation
+    double theta_Kd = 0.1545;   // [V·s / rad] — damp arm motion  
+
+    //working params for alpha_kd, theta_kd, alpha_pid.kp and theta_pid.kp, with current inertias measured: Jp = 1.26e-4; Jr = 6.2e-5; (12/05/26)
+    // these wer
+    //alpha_Kd = 0.3296; 
+    //theta_Kd = 0.1545;  
+    //alpha_pid.Kp = 45.0054;
+    //theta_pid.Kp = -0.0071;   
 
     double voltage_limit = 6.0;
     double dt;
@@ -132,7 +139,7 @@ struct BalanceController {
         // Positive alpha (tilt right) → negative voltage to push
         // arm left and counteract tilt. PID error = (0 - α) < 0
         // so output is negative. Correct.
-        alpha_pid.Kp = 20.0;   // [V / rad]
+        alpha_pid.Kp = 120.0054;   // [V / rad]
         alpha_pid.Ki = 0.3;    // [V / (rad·s)] — steady-state correction
         alpha_pid.Kd = 0.0;    // D handled separately via measured velocity
         alpha_pid.integral_limit = 0.2;  // anti-windup [rad·s]
@@ -142,9 +149,10 @@ struct BalanceController {
         // This is NOT a centering controller. It moves the base
         // under the pendulum. The sign is handled in compute():
         // we SUBTRACT theta_pid output instead of adding it.
-        theta_pid.Kp = 2.0;    // [V / rad]
-        theta_pid.Ki = 0.0;    // no integral needed for arm
-        theta_pid.Kd = 0.0;    // D handled separately via measured velocity
+        //increasing the two values below seems to make an improvement to the arm, but introduces less stability to the pendulum.
+        theta_pid.Kp = 1.1;    // [V / rad] // higher value makes theta for arm deviate less from zero, but pendulum deviates more
+        theta_pid.Ki = -1.1;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
+        theta_pid.Kd = 0.0;  // D handled separately via measured velocity
         theta_pid.integral_limit = 0.5;
         theta_pid.output_limit   = voltage_limit;
     }
