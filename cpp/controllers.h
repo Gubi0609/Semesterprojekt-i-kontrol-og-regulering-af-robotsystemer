@@ -82,6 +82,14 @@ struct PID {
     }
 };
 
+
+struct PLACE {
+    double k_theta1 = 0.0;
+    double k_theta2 = 0.0;
+    double k_thetadot1 = 0.0;
+    double k_thetadot2 = 0.0;
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // Balance Controller — Parallel PID
 // ═══════════════════════════════════════════════════════════════════
@@ -118,6 +126,9 @@ struct BalanceController {
     // to move the base under the pendulum, not pull it back.
     PID theta_pid;
 
+    //gains from matlab
+    PLACE place_gains;
+
     // ── D gains applied to measured velocities ─────────────────
     // Using tachometer readings (hardware) or simulation velocities
     // instead of differentiating noisy encoder positions.
@@ -144,6 +155,14 @@ struct BalanceController {
         alpha_pid.Kd = 0.0;    // D handled separately via measured velocity
         alpha_pid.integral_limit = 0.2;  // anti-windup [rad·s]
         alpha_pid.output_limit   = voltage_limit;
+
+        // Gains from matlab: 
+        //theta_1 is the arm, theta_2 is the pendulum angle, thetadot_1 is the arm velocity and thetadot_2 is the pendulum velocity.
+        //gains from matlab PLACE: -0.0191, 119.9538, -0.2456, -0.2359 [-5, -6, -7, -20] - poles
+        place_gains.k_theta1 = -0.0191;
+        place_gains.k_theta2 = 119.9538;
+        place_gains.k_thetadot1 = -0.2456;
+        place_gains.k_thetadot2 = -0.2359;
 
         // ── Theta PI (arm — secondary) ─────────────────────────
         // This is NOT a centering controller. It moves the base
@@ -190,6 +209,15 @@ struct BalanceController {
         u = compensate_deadband(u);
 
         // Clamp to prevent saturation
+        return clamp(u, -voltage_limit, voltage_limit);
+    }
+
+    double compute_from_pp_gains(const QubeState& s){
+        //this segment can be used to compute voltage based of the 4 gains gotten from pole placement
+        //or LQR.
+        double u = -(place_gains.k_theta1 * s.theta + place_gains.k_theta2 * s.alpha
+                     + place_gains.k_thetadot1 * s.theta_dot + place_gains.k_thetadot2 * s.alpha_dot);
+        u = compensate_deadband(u);
         return clamp(u, -voltage_limit, voltage_limit);
     }
 
