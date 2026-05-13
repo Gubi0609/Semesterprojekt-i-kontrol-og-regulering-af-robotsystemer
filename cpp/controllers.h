@@ -132,8 +132,8 @@ struct BalanceController {
     // ── D gains applied to measured velocities ─────────────────
     // Using tachometer readings (hardware) or simulation velocities
     // instead of differentiating noisy encoder positions.
-    double alpha_Kd = 0.3296;   // [V·s / rad] — damp pendulum oscillation
-    double theta_Kd = 0.1545;   // [V·s / rad] — damp arm motion  
+    double alpha_Kd = 2;   // [V·s / rad] — damp pendulum oscillation
+    double theta_Kd = 1;   // [V·s / rad] — damp arm motion  
 
     //working params for alpha_kd, theta_kd, alpha_pid.kp and theta_pid.kp, with current inertias measured: Jp = 1.26e-4; Jr = 6.2e-5; (12/05/26)
     // these wer
@@ -150,7 +150,7 @@ struct BalanceController {
         // Positive alpha (tilt right) → negative voltage to push
         // arm left and counteract tilt. PID error = (0 - α) < 0
         // so output is negative. Correct.
-        alpha_pid.Kp = 120.0054;   // [V / rad]
+        alpha_pid.Kp = 20.0;   // [V / rad]
         alpha_pid.Ki = 0.3;    // [V / (rad·s)] — steady-state correction
         alpha_pid.Kd = 0.0;    // D handled separately via measured velocity
         alpha_pid.integral_limit = 0.2;  // anti-windup [rad·s]
@@ -158,19 +158,22 @@ struct BalanceController {
 
         // Gains from matlab: 
         //theta_1 is the arm, theta_2 is the pendulum angle, thetadot_1 is the arm velocity and thetadot_2 is the pendulum velocity.
-        //gains from matlab PLACE: -0.0191, 119.9538, -0.2456, -0.2359 [-5, -6, -7, -20] - poles
-        place_gains.k_theta1 = -0.0191;
-        place_gains.k_theta2 = 119.9538;
-        place_gains.k_thetadot1 = -0.2456;
-        place_gains.k_thetadot2 = -0.2359;
+        //gains from matlab PLACE: -0.0191, 119.9538, -0.2456, -0.2359 [-5, -6, -7, -20] - poles // actual gains for "okay" stability: -1, 119.9538, -0.2456, 0.2359
+        //gains from LQR: [-0.0316	540.5	-0.65	0.81], with Q = diag([0.001, 0.1, 0.001, 0.001]) and R = 1 // arm deviates too much from zero, while pendulum oscilates too much. 
+        //-- The Q diag may be changed: less weight on the pendulum, more weight on the arm: This proved to be unstable, more research needed for good implementation
+        place_gains.k_theta1 = -1; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
+        place_gains.k_theta2 = 119.9538; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
+        place_gains.k_thetadot1 = -0.2456; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
+        place_gains.k_thetadot2 = 0.2359; // the gains given from matlab are all negative except for the big one, theta2. 
+        // but the system becomes stable if the last gain is positive.
 
         // ── Theta PI (arm — secondary) ─────────────────────────
         // This is NOT a centering controller. It moves the base
         // under the pendulum. The sign is handled in compute():
         // we SUBTRACT theta_pid output instead of adding it.
         //increasing the two values below seems to make an improvement to the arm, but introduces less stability to the pendulum.
-        theta_pid.Kp = 1.1;    // [V / rad] // higher value makes theta for arm deviate less from zero, but pendulum deviates more
-        theta_pid.Ki = -1.1;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
+        theta_pid.Kp = 2.0;    // [V / rad] // higher value makes theta for arm deviate less from zero, but pendulum deviates more
+        theta_pid.Ki = 0.0;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
         theta_pid.Kd = 0.0;  // D handled separately via measured velocity
         theta_pid.integral_limit = 0.5;
         theta_pid.output_limit   = voltage_limit;
@@ -212,7 +215,7 @@ struct BalanceController {
         return clamp(u, -voltage_limit, voltage_limit);
     }
 
-    double compute_from_pp_gains(const QubeState& s){
+    double compute_from_gains(const QubeState& s){
         //this segment can be used to compute voltage based of the 4 gains gotten from pole placement
         //or LQR.
         double u = -(place_gains.k_theta1 * s.theta + place_gains.k_theta2 * s.alpha
