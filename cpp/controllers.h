@@ -219,7 +219,7 @@ struct BalanceController {
         //this segment can be used to compute voltage based of the 4 gains gotten from pole placement
         //or LQR.
         double u = -(place_gains.k_theta1 * s.theta + place_gains.k_theta2 * s.alpha
-                     + place_gains.k_thetadot1 * s.theta_dot + place_gains.k_thetadot2 * s.alpha_dot);
+                     + place_gains.k_thetadot1 * s.theta_dot - place_gains.k_thetadot2 * s.alpha_dot);
         u = compensate_deadband(u);
         return clamp(u, -voltage_limit, voltage_limit);
     }
