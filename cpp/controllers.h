@@ -158,13 +158,13 @@ struct BalanceController {
 
         // Gains from matlab: 
         //theta_1 is the arm, theta_2 is the pendulum angle, thetadot_1 is the arm velocity and thetadot_2 is the pendulum velocity.
-        //gains from matlab PLACE: -0.0191, 119.9538, -0.2456, -0.2359 [-5, -6, -7, -20] - poles // actual gains for "okay" stability: -1, 119.9538, -0.2456, 0.2359
+        //gains from matlab PLACE: -0.0191, 119.9538, -0.2456, -0.2359 [-5, -6, -7, -20] - poles // actual gains for "okay" stability: -1, 119.9538, -0.2456, -0.2359  // changed now, dont need to invert the last gain anymore.
         //gains from LQR: [-0.0316	540.5	-0.65	0.81], with Q = diag([0.001, 0.1, 0.001, 0.001]) and R = 1 // arm deviates too much from zero, while pendulum oscilates too much. 
         //-- The Q diag may be changed: less weight on the pendulum, more weight on the arm: This proved to be unstable, more research needed for good implementation
         place_gains.k_theta1 = -1; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
         place_gains.k_theta2 = 119.9538; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
         place_gains.k_thetadot1 = -0.2456; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
-        place_gains.k_thetadot2 = 0.2359; // the gains given from matlab are all negative except for the big one, theta2. 
+        place_gains.k_thetadot2 = -0.2359; // the gains given from matlab are all negative except for the big one, theta2. 
         // but the system becomes stable if the last gain is positive.
 
         // ── Theta PI (arm — secondary) ─────────────────────────
