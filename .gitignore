@@ -15,3 +15,5 @@ cpp/analyze_csv
 cpp/read_fast
 cpp/*.o
 cpp/imgui.ini
+cpp/NOTES_modern_control.md
+cpp/run_sim.exe

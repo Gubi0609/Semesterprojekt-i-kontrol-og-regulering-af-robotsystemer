@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
                 printf("  [%.2fs] Caught! alpha=%.1f deg\n", t, s.alpha * 180.0 / M_PI);
             }
         } else {
-            voltage = balance.compute_from_gains(s); //change between .compute and .compute_from_gains to switch between PID and PLACE control.
+            voltage = balance.compute(s); //change between .compute and .compute_from_gains to switch between PID and PLACE control.
             if (fabs(s.alpha) > 30.0 * M_PI / 180.0) {
                 mode = SWING_UP;
                 balance.reset();

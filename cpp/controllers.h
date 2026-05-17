@@ -88,6 +88,17 @@ struct PLACE {
     double k_theta2 = 0.0;
     double k_thetadot1 = 0.0;
     double k_thetadot2 = 0.0;
+    double k_integral = 0.0;  // these bottom two are an attempt to place an additional pole
+    double k_auxilliary = 0.0;
+};
+
+struct QubeStateAugmented {
+    double theta1;
+    double theta2;
+    double theta_dot1;
+    double theta_dot2;
+    double x_integral; 
+    double x_auxilliary;
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -146,14 +157,16 @@ struct BalanceController {
     double dt;
 
     explicit BalanceController(double dt_) : dt(dt_) {
+
         // ── Alpha PI (pendulum — primary) ──────────────────────
         // Positive alpha (tilt right) → negative voltage to push
         // arm left and counteract tilt. PID error = (0 - α) < 0
         // so output is negative. Correct.
-        alpha_pid.Kp = 20.0;   // [V / rad]
-        alpha_pid.Ki = 0.3;    // [V / (rad·s)] — steady-state correction
-        alpha_pid.Kd = 0.0;    // D handled separately via measured velocity
-        alpha_pid.integral_limit = 0.2;  // anti-windup [rad·s]
+        // when using pidtune on the transfer function (low B matrix, meaning voltage is the input), K_i = 1.58e+05
+        alpha_pid.Kp = 0.0;   // [V / rad]
+        alpha_pid.Ki = 0.0;   // [V / (rad·s)] — steady-state correction
+        alpha_pid.Kd = 0.0;   // D handled separately via measured velocity
+        alpha_pid.integral_limit = 0.5;  // anti-windup [rad·s]
         alpha_pid.output_limit   = voltage_limit;
 
         // Gains from matlab: 
@@ -161,10 +174,17 @@ struct BalanceController {
         //gains from matlab PLACE: -0.0191, 119.9538, -0.2456, -0.2359 [-5, -6, -7, -20] - poles // actual gains for "okay" stability: -1, 119.9538, -0.2456, -0.2359  // changed now, dont need to invert the last gain anymore.
         //gains from LQR: [-0.0316	540.5	-0.65	0.81], with Q = diag([0.001, 0.1, 0.001, 0.001]) and R = 1 // arm deviates too much from zero, while pendulum oscilates too much. 
         //-- The Q diag may be changed: less weight on the pendulum, more weight on the arm: This proved to be unstable, more research needed for good implementation
-        place_gains.k_theta1 = -1; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
-        place_gains.k_theta2 = 119.9538; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
-        place_gains.k_thetadot1 = -0.2456; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
-        place_gains.k_thetadot2 = -0.2359; // the gains given from matlab are all negative except for the big one, theta2. 
+        //tried updating voltage  = torque*(km/Rm). gave new B matrice, therefore LQR and place produces new gains.
+        // gains from place[-5, -6, -7, -20]: [-0.0003e+04, 1.9781e+04, -0.0042e+04, -0.0040e+04] // these gains are quite high. gives very unstable output, voltages oscilates a lot
+        // gains from place [-0.1, -0.2, -7, -80]: [-0.0084	214.5	-17.96	-64.9] // relatively stable system, though arm angle rests -25 degrees // voltages oscilate a lot, reducing the last gain reduces this oscillations, meaning the placement coudl be improved. 
+        // gains from place [-0.01, -0.1, -20, -200]: [-0.003	648.88	-18.12	-53.142] // more agressive pole placement, fewer large osscilations - 
+
+
+        place_gains.k_theta1 = -0.003; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
+        place_gains.k_theta2 = 248.88; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
+        place_gains.k_thetadot1 = -18.12; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
+        place_gains.k_thetadot2 = -53.142; // the gains given from matlab are all negative except for the big one, theta2. 
+
         // but the system becomes stable if the last gain is positive.
 
         // ── Theta PI (arm — secondary) ─────────────────────────
@@ -172,8 +192,8 @@ struct BalanceController {
         // under the pendulum. The sign is handled in compute():
         // we SUBTRACT theta_pid output instead of adding it.
         //increasing the two values below seems to make an improvement to the arm, but introduces less stability to the pendulum.
-        theta_pid.Kp = 2.0;    // [V / rad] // higher value makes theta for arm deviate less from zero, but pendulum deviates more
-        theta_pid.Ki = 0.0;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
+        theta_pid.Kp = 0.0;    // [V / rad] // higher value makes theta for arm deviate less from zero, but pendulum deviates more
+        theta_pid.Ki = 1.58e+05;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
         theta_pid.Kd = 0.0;  // D handled separately via measured velocity
         theta_pid.integral_limit = 0.5;
         theta_pid.output_limit   = voltage_limit;
@@ -220,6 +240,22 @@ struct BalanceController {
         //or LQR.
         double u = -(place_gains.k_theta1 * s.theta + place_gains.k_theta2 * s.alpha
                      + place_gains.k_thetadot1 * s.theta_dot - place_gains.k_thetadot2 * s.alpha_dot);
+        u = compensate_deadband(u);
+        return clamp(u, -voltage_limit, voltage_limit);
+    }
+
+    double compute_from_gains_augmented( QubeStateAugmented& s, double dt){ // this doesnt work yet, matlab doesnt give gains yet.
+        s.x_integral += (-s.theta1) *dt;
+        s.x_integral = clamp(s.x_integral, -0.5, 0.5);
+        s.x_auxilliary +=(0.2*s.x_integral + s.theta1) * dt;
+        s.x_auxilliary = clamp(s.x_auxilliary, -1, 1);
+
+        double u = -(place_gains.k_theta1*s.theta1
+                     + place_gains.k_theta2*s.theta2
+                     + place_gains.k_thetadot1*s.theta_dot1
+                     - place_gains.k_thetadot2*s.theta_dot2
+                     + place_gains.k_integral * s.x_integral
+                     + place_gains.k_auxilliary * s.x_auxilliary);
         u = compensate_deadband(u);
         return clamp(u, -voltage_limit, voltage_limit);
     }
