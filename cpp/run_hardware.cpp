@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
     // ── Default parameters ──
     double duration = 30.0;   // total run time [seconds]
     double dt       = 0.001;  // control period [seconds] → 1 kHz
+    bool   use_place = false; // --place flag to use pole placement gains
 
     // ── Parse command-line arguments ──
     for (int i = 1; i < argc; i++) {
@@ -88,6 +89,8 @@ int main(int argc, char** argv) {
             dt = atof(argv[++i]);
         else if (!strcmp(argv[i], "--rate") && i+1 < argc)
             dt = 1.0 / atof(argv[++i]);  // e.g. --rate 2000 → dt = 0.0005
+        else if (!strcmp(argv[i], "--place"))
+            use_place = true;
     }
 
     // Register Ctrl+C handler before touching any hardware
@@ -140,7 +143,13 @@ int main(int argc, char** argv) {
     int  n_steps = static_cast<int>(duration / dt);  // total iterations
     long dt_ns   = static_cast<long>(dt * 1e9);      // period in nanoseconds
 
-    printf("Running: %.1fs at %.0f Hz. Ctrl+C to stop.\n", duration, 1.0 / dt);
+    printf("Running: %.1fs at %.0f Hz. Controller: %s. Ctrl+C to stop.\n",
+           duration, 1.0 / dt, use_place ? "POLE PLACEMENT" : "PID");
+    if (use_place) {
+        printf("  Gains K = [%.4f, %.4f, %.4f, %.4f]\n",
+               BalanceController::K_theta, BalanceController::K_alpha,
+               BalanceController::K_theta_dot, BalanceController::K_alpha_dot);
+    }
 
     // ── Initialize the loop timer ──────────────────────────────────
     // We record the current time and schedule each future iteration
@@ -206,7 +215,7 @@ int main(int argc, char** argv) {
             }
         } else {
             // Full state feedback: keep pendulum balanced at α=0
-            voltage = balance.compute(s);
+            voltage = use_place ? balance.compute_from_gains(s) : balance.compute(s);
 
             // If pendulum falls too far, give up and go back to swing-up
             if (fabs(s.alpha) > 30.0 * M_PI / 180.0) {
