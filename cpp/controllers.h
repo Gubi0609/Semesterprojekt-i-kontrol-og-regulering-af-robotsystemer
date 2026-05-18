@@ -194,13 +194,19 @@ struct BalanceController {
     // Pole placement gains from pole_placement.m (pivot-frame, voltage-input)
     // Measured Jr=6.2e-5, Jp=1.26e-4
     //
-    // Conservative poles [-5, -7, -20, -30]:
-    static constexpr double K_theta     = -2.9866;
-    static constexpr double K_alpha     = 28.5910;
-    static constexpr double K_theta_dot = -1.3149;
-    static constexpr double K_alpha_dot =  2.3016;
+    // Very conservative poles [-3, -4, -10, -15]:
+    static constexpr double K_theta     = -0.25;
+    static constexpr double K_alpha     = 10.7;
+    static constexpr double K_theta_dot = -0.23;
+    static constexpr double K_alpha_dot =  0.73;
     //
-    // Quanser-suggested poles [-2.8±2.86j, -30, -40] (faster, more aggressive):
+    // Conservative poles [-5, -7, -20, -30]:
+    // static constexpr double K_theta     = -2.9866;
+    // static constexpr double K_alpha     = 28.5910;
+    // static constexpr double K_theta_dot = -1.3149;
+    // static constexpr double K_alpha_dot =  2.3016;
+    //
+    // Quanser-suggested poles [-2.8±2.86j, -30, -40]:
     // static constexpr double K_theta     = -2.7340;
     // static constexpr double K_alpha     = 34.6427;
     // static constexpr double K_theta_dot = -1.1572;
