@@ -1,12 +1,14 @@
-%% Full Euler-Lagrange Derivation — DH → Jacobians → Lagrangian → EOM → A,B
+%% Full Euler-Lagrange Derivation — Direct Geometry → Lagrangian → EOM → A,B
 %  =========================================================================
 %
-%  This script follows the same derivation path as PendulumModel.mlx:
-%    1. DH parameters for 2-link rotary inverted pendulum
-%    2. Forward kinematics (homogeneous transforms)
-%    3. Jacobians (geometric, for each link CoM)
-%    4. Inertia tensors (solid cylinders, in body frame)
-%    5. Kinetic and potential energy (Lagrangian)
+%  This script derives the complete equations of motion for the Qube-Servo 3
+%  rotary inverted pendulum using the Euler-Lagrange method:
+%
+%    1. Physical parameters
+%    2. Geometry: CoM positions in base frame (DIRECT, no DH)
+%    3. Velocities by differentiation
+%    4. Kinetic energy T and potential energy V
+%    5. Lagrangian L = T - V
 %    6. Euler-Lagrange equations → nonlinear EOM
 %    7. Symbolic linearisation at upright equilibrium
 %    8. Torque → voltage conversion
@@ -15,9 +17,31 @@
 %  Convention:
 %    q1 = theta (motor/arm angle)
 %    q2 = alpha (pendulum angle, 0 = upright)
+%    Positive q2: pendulum tilts in direction that depends on q1
 %    Jp is about the PIVOT (measured value)
+%    Jr is about the MOTOR SHAFT (measured value)
 %
-%  All steps shown explicitly so you can compare with PendulumModel.mlx.
+%  WHY NOT DH?
+%  -----------
+%  The Qube pendulum rotates about the arm's longitudinal axis.
+%  Standard DH convention cannot naturally represent this because DH
+%  joint axes are always z_{i-1}, and the alpha twist is about x_i.
+%  You cannot make z1 point along the arm with a single DH twist.
+%  Using DH here produces a model where both joints rotate about the
+%  vertical axis, putting everything in the horizontal plane (z=0),
+%  which kills all gravity terms.
+%
+%  For a 2-DOF system, direct geometry is simpler and less error-prone.
+%
+%  WHY NOT USE Jr/Jp DIRECTLY AS BODY-FRAME INERTIAS IN THE JACOBIAN METHOD?
+%  --------------------------------------------------------------------------
+%  The Jacobian-based Lagrangian separates T into translational + rotational:
+%    T = ½ dq' [m*Jv'*Jv + Jw'*R*I_com*R'*Jw] dq
+%  This requires inertia about the CoM (I_com), because Jv already
+%  captures CoM motion. Using Jr or Jp (about rotation axis) would
+%  double-count the parallel-axis contribution.
+%
+%  Instead, we write T directly using the measured axis-inertias.
 
 clear; clc; close all;
 syms q1 q2 dq1 dq2 ddq1 ddq2 tau1 real
@@ -26,536 +50,510 @@ syms g_sym positive
 %% ====================================================================
 %  1. PHYSICAL PARAMETERS
 %  ====================================================================
-%  Using your measured values from the parameter list.
-
 % Link 1 (encoder + arm assembly)
-m1_val      = 0.095;       % total mass of link 1 [kg]
-l_enc_val   = 0.0519;      % encoder cylinder length [m]
-r_enc_val   = 0.01395;     % encoder cylinder radius [m]
-l_arm_val   = 0.085;       % arm length (Lr) [m]
-r_arm_val   = 0.00315;     % arm rod radius [m]
+m1_val   = 0.095;        % total mass of link 1 [kg]
+l_arm    = 0.085;        % arm length [m]
+r_arm    = 0.00315;      % arm rod radius [m]
 
 % Link 2 (pendulum)
-m2_val      = 0.024;       % pendulum mass [kg]
-l_p_val     = 0.129;       % pendulum total length [m]
-r_p_val     = 0.00475;     % pendulum rod radius [m]
+mp_val   = 0.024;        % pendulum mass [kg]
+Lp_val   = 0.129;        % pendulum total length [m]
+r_p_val  = 0.00475;      % pendulum rod radius [m]
 
 % Motor
-Rm_val      = 7.5;         % terminal resistance [Ω]
-km_val      = 0.042;       % back-EMF / torque constant
-Jr_val      = 6.2e-5;      % measured arm assembly inertia [kg·m²]
-Jp_val      = 1.26e-4;     % measured pendulum inertia about pivot [kg·m²]
+Rm_val   = 7.5;          % terminal resistance [Ω]
+km_val   = 0.042;        % back-EMF / torque constant
 
-g_val       = 9.81;
+% Measured inertias (axis-frame, NOT CoM-frame)
+Jr_val   = 6.2e-5;       % arm assembly about motor shaft [kg·m²]
+Jp_val   = 1.26e-4;      % pendulum about pivot [kg·m²]
+
+g_val    = 9.81;
 
 % Derived
-Lr_val = l_arm_val;
-hLp_val = l_p_val / 2;
+Lr_val  = l_arm;
+hLp_val = Lp_val / 2;              % CoM distance from pivot
+Jt_val  = Jr_val + mp_val*Lr_val^2; % total arm-side inertia
+
+% Pendulum CoM inertia (for rotational KE separation)
+Jp_com_val = Jp_val - mp_val * hLp_val^2;
 
 fprintf('============================================================\n');
 fprintf('  FULL EULER-LAGRANGE DERIVATION\n');
-fprintf('  (same method as PendulumModel.mlx)\n');
+fprintf('  (direct geometry, no DH)\n');
 fprintf('============================================================\n\n');
+fprintf('  Jr (measured, about motor shaft) = %.4e\n', Jr_val);
+fprintf('  Jp (measured, about pivot)       = %.4e\n', Jp_val);
+fprintf('  Jp_com = Jp - mp·hLp²            = %.4e\n', Jp_com_val);
+fprintf('  Jt = Jr + mp·Lr²                 = %.4e\n', Jt_val);
+fprintf('  hLp = Lp/2                        = %.4f m\n\n', hLp_val);
 
 %% ====================================================================
-%  2. DH PARAMETERS & FORWARD KINEMATICS
+%  2. GEOMETRY — CoM POSITIONS IN BASE FRAME
 %  ====================================================================
 %
-%  The Qube rotary inverted pendulum is a 2-DOF system:
+%  Base frame: z pointing up (gravity = -g·ẑ), origin at motor shaft.
 %
-%  Frame 0 (base):  Motor shaft, z-axis pointing up
-%  Joint 1:         Rotation about z0 by q1 (motor angle)
-%  Frame 1:         At motor shaft, after q1 rotation
-%                   Link 1 extends along x1 to the pivot
-%  Joint 2:         Rotation about x1 by q2 (pendulum angle)
-%  Frame 2:         At pivot point, pendulum hangs along z2
+%  Qube geometry:
+%    - The arm extends horizontally from the motor, length Lr
+%    - At the arm tip, the pendulum rotates about the ARM's axis
+%    - When q2=0 (upright), the pendulum points straight up (+z)
+%    - q2 rotation tilts the pendulum in a plane perpendicular to
+%      the arm but containing the vertical
 %
-%  DH table (modified DH convention):
-%    Link | a_i   | alpha_i | d_i  | theta_i
-%    -----|-------|---------|------|--------
-%      1  |   0   |    0    |  0   |   q1
-%      2  |  Lr   |  pi/2   |  0   |   q2
+%  The pendulum CoM position is obtained by rotating the upright
+%  vector [0,0,hLp] about the arm axis [cos(q1),sin(q1),0] by q2.
 %
-%  Note: alpha convention means joint 2 rotates perpendicular to
-%  joint 1, which is correct for the rotary inverted pendulum.
+%  Using Rodrigues' formula: v_rot = v·cos(q2) + (k×v)·sin(q2)
+%  with k = [cos(q1), sin(q1), 0] and v = [0, 0, hLp], k·v = 0:
 
-fprintf('  Step 2: DH parameters & forward kinematics\n');
-fprintf('  ─────────────────────────────────────────────\n');
+fprintf('  Step 2: CoM positions (direct geometry)\n');
+fprintf('  ────────────────────────────────────────\n');
 
-syms Lr Lp m1 m2_s Jr_s Jp_s real
+syms Lr hLp mp_s Jr_s Jp_s Jp_com_s real
 
-% Homogeneous transform for DH parameters
-% Using standard DH: T = Rz(theta) * Tz(d) * Tx(a) * Rx(alpha)
-dh_transform = @(theta, d, a, alpha) ...
-    [cos(theta), -sin(theta)*cos(alpha),  sin(theta)*sin(alpha), a*cos(theta);
-     sin(theta),  cos(theta)*cos(alpha), -cos(theta)*sin(alpha), a*sin(theta);
-     0,           sin(alpha),             cos(alpha),            d;
-     0,           0,                      0,                     1];
-
-% Transform from base to frame 1 (after motor rotation)
-T01 = dh_transform(q1, 0, 0, 0);
-
-% Transform from frame 1 to frame 2 (at pendulum pivot)
-T12 = dh_transform(q2, 0, Lr, sym(pi)/2);
-
-% Transform from base to frame 2
-T02 = simplify(T01 * T12);
-
-fprintf('  T01 (base → arm):\n');
-disp(T01);
-fprintf('  T02 (base → pendulum pivot):\n');
-disp(simplify(T02));
-
-%% ====================================================================
-%  3. POSITIONS OF CENTERS OF MASS
-%  ====================================================================
-%
-%  Link 1 CoM: halfway along the arm (along x1 direction)
-%    In frame 1: [Lr/2, 0, 0]
-%    In frame 0: apply T01
-%
-%  Link 2 CoM: at distance Lp/2 from pivot, along pendulum
-%    The pendulum hangs along the -z2 direction when q2=0 (upright)
-%    Actually, convention: q2=0 means upright, pendulum along +z2
-%    In frame 2: [0, 0, Lp/2]
-%    In frame 0: apply T02
-
-fprintf('  Step 3: Center of mass positions\n');
-fprintf('  ─────────────────────────────────\n');
-
-% CoM of link 1 in base frame
-p1_com_local = [Lr/2; 0; 0; 1];
-p1_com = T01 * p1_com_local;
-p1_com = simplify(p1_com(1:3));
+% Link 1 CoM: midpoint of arm (stays in horizontal plane)
+p1_com = [Lr/2 * cos(q1);
+          Lr/2 * sin(q1);
+          0];
 
 fprintf('  Link 1 CoM (base frame):\n');
 disp(p1_com);
 
-% CoM of link 2 in base frame
-% When q2 = 0 (upright), pendulum points up (+z in frame 2)
-% Lp/2 along pendulum from pivot
-p2_com_local = [0; 0; hLp_val; 1];  % using numeric hLp for clarity
-% Actually let's keep it symbolic
-syms hLp real
-p2_com_local = [0; 0; hLp; 1];
-p2_com = T02 * p2_com_local;
-p2_com = simplify(p2_com(1:3));
+% Link 2 CoM: pivot + rotated hLp vector
+%   pivot = [Lr·cos(q1), Lr·sin(q1), 0]
+%   v = [0, 0, hLp]  (upright)
+%   k = [cos(q1), sin(q1), 0]  (arm axis)
+%   k × v = [sin(q1)·hLp, -cos(q1)·hLp, 0]
+%
+%   v_rot = v·cos(q2) + (k×v)·sin(q2)
+%         = [hLp·sin(q2)·sin(q1), -hLp·sin(q2)·cos(q1), hLp·cos(q2)]
+
+p2_com = [Lr*cos(q1) + hLp*sin(q2)*sin(q1);
+          Lr*sin(q1) - hLp*sin(q2)*cos(q1);
+          hLp*cos(q2)];
 
 fprintf('  Link 2 CoM (base frame):\n');
 disp(p2_com);
+fprintf('  Note: z-component = hLp·cos(q2) → correct gravity dependence!\n\n');
 
 %% ====================================================================
-%  4. JACOBIANS (for each link CoM)
+%  3. VELOCITIES
 %  ====================================================================
-%
-%  The Jacobian maps joint velocities [dq1; dq2] to Cartesian
-%  velocities of each CoM:  v_com = J_v * [dq1; dq2]
-%
-%  For the Lagrangian we need:
-%    - Linear velocity Jacobian: J_v = d(p_com)/d(q)
-%    - Angular velocity Jacobian: J_w (from joint axes)
+fprintf('  Step 3: CoM velocities\n');
+fprintf('  ──────────────────────\n');
 
-fprintf('  Step 4: Jacobians\n');
-fprintf('  ─────────────────\n');
-
-q = [q1; q2];
-
-% Linear velocity Jacobians (3x2)
-Jv1 = jacobian(p1_com, q);
-Jv1 = simplify(Jv1);
-
-Jv2 = jacobian(p2_com, q);
-Jv2 = simplify(Jv2);
-
-fprintf('  Jv1 (link 1 linear velocity Jacobian):\n');
-disp(Jv1);
-fprintf('  Jv2 (link 2 linear velocity Jacobian):\n');
-disp(Jv2);
-
-% Angular velocity Jacobians (3x2)
-% Joint 1 rotates about z0 = [0; 0; 1]
-% Joint 2 rotates about x1 (which is the x-axis of frame 1)
-% In base frame, x1 = R01 * [1; 0; 0]
-R01 = T01(1:3, 1:3);
-z0 = [0; 0; 1];
-x1 = simplify(R01 * [1; 0; 0]);
-
-% For link 1: only joint 1 contributes
-Jw1 = [z0, [0;0;0]];
-
-% For link 2: both joints contribute
-Jw2 = [z0, x1];
-
-fprintf('  Jw1 (link 1 angular velocity Jacobian):\n');
-disp(Jw1);
-fprintf('  Jw2 (link 2 angular velocity Jacobian):\n');
-disp(simplify(Jw2));
-
-%% ====================================================================
-%  5. INERTIA TENSORS
-%  ====================================================================
-%
-%  Each link is modelled as a solid cylinder.
-%
-%  For a solid cylinder of mass m, radius r, length L:
-%    About symmetry axis:    I_axial = (1/2) m r²
-%    About transverse axis:  I_trans = (1/12) m (3r² + L²)
-%
-%  Link 1: rotates about its own axis (z0), arm extends along x1
-%    In body frame (x = along arm, z = rotation axis):
-%    I1 = diag(I_trans_arm, I_trans_arm, I_axial_arm)
-%    BUT: we use the measured Jr instead of computing from geometry,
-%    since Jr includes the encoder, hub, screws, etc.
-%
-%  Link 2: pendulum, extends along its own z-axis
-%    In body frame (z = along pendulum):
-%    I2 = diag(I_trans_pend, I_trans_pend, I_axial_pend)
-%    We use measured Jp (about pivot) for the dominant terms.
-
-fprintf('  Step 5: Inertia tensors\n');
-fprintf('  ───────────────────────\n');
-
-% Link 1: We use measured Jr for the rotation axis.
-% For the off-axis terms, compute from cylinder geometry.
-I1_axial = Jr_val;  % measured, includes everything
-% Transverse: approximate from arm rod
-I1_trans = (1/12) * m1_val * (3*r_arm_val^2 + l_arm_val^2);
-
-% In frame 1 (arm along x, rotation about z):
-% The Jacobian Jw1 gives angular velocity in base frame.
-% We need inertia in base frame. For link 1, only q1 matters
-% and the rotation is about z, so:
-I1_body = diag([I1_trans, I1_trans, I1_axial]);
-
-fprintf('  I1 (link 1, body frame):\n');
-fprintf('    I_axial (z) = %.4e  (measured Jr)\n', I1_axial);
-fprintf('    I_trans     = %.4e  (computed from geometry)\n', I1_trans);
-
-% Link 2: We use measured Jp (pivot-frame) directly.
-% For pivot-frame, the moment about the pendulum axis (z2) and
-% the transverse axes at the pivot:
-%   I_zz = (1/2) m r²  (about symmetry axis, same in any frame)
-%   I_xx = I_yy = Jp   (about pivot, measured)
-I2_axial = 0.5 * m2_val * r_p_val^2;  % tiny, ~2.7e-7
-I2_trans = Jp_val;  % measured, about pivot
-
-% In pendulum body frame (z along pendulum):
-I2_body = diag([I2_trans, I2_trans, I2_axial]);
-
-fprintf('  I2 (link 2, body frame, PIVOT-FRAME convention):\n');
-fprintf('    I_trans (x,y) = %.4e  (measured Jp about pivot)\n', I2_trans);
-fprintf('    I_axial (z)   = %.4e  (½mr², negligible)\n\n', I2_axial);
-
-%% ====================================================================
-%  6. KINETIC ENERGY (via Jacobians)
-%  ====================================================================
-%
-%  T = Σ [ ½ dq' Jv_i' m_i Jv_i dq  +  ½ dq' Jw_i' R_i I_i R_i' Jw_i dq ]
-%
-%  This gives T = ½ dq' M(q) dq, where M(q) is the mass/inertia matrix.
-
-fprintf('  Step 6: Kinetic energy → mass matrix M(q)\n');
-fprintf('  ──────────────────────────────────────────\n');
-
+q  = [q1; q2];
 dq = [dq1; dq2];
 
-% Rotation matrices for expressing body inertia in base frame
-R01_mat = T01(1:3, 1:3);
-R02_mat = T02(1:3, 1:3);
+% Differentiate positions w.r.t. q to get Jacobians, then v = J·dq
+Jv1 = jacobian(p1_com, q);
+Jv2 = jacobian(p2_com, q);
 
-% Link 1: translational + rotational KE
-M1_trans = m1_val * (Jv1.' * Jv1);
-M1_rot   = Jw1.' * R01_mat * I1_body * R01_mat.' * Jw1;
+v1 = Jv1 * dq;
+v2 = Jv2 * dq;
 
-% Link 2: translational + rotational KE
-M2_trans = m2_val * (Jv2.' * Jv2);
-M2_rot   = Jw2.' * R02_mat * I2_body * R02_mat.' * Jw2;
-
-% Total mass matrix (2x2, symbolic)
-M_sym = simplify(M1_trans + M1_rot + M2_trans + M2_rot);
-
-fprintf('  M(q) = \n');
-disp(M_sym);
+fprintf('  Jv1 (link 1, 3×2):\n'); disp(simplify(Jv1));
+fprintf('  Jv2 (link 2, 3×2):\n'); disp(simplify(Jv2));
 
 %% ====================================================================
-%  7. POTENTIAL ENERGY
+%  4. KINETIC ENERGY
 %  ====================================================================
 %
-%  V = m1*g*z_com1 + m2*g*z_com2
+%  T = T_arm + T_pend_trans + T_pend_rot
 %
-%  Link 1 CoM is at a fixed height (in the horizontal plane) → no
-%  contribution to potential energy (its z doesn't change with q).
+%  Arm (link 1):
+%    The measured Jr already includes everything (encoder, hub, arm rod,
+%    screws) about the motor axis. The arm only has one DOF (q1), so:
+%      T_arm = ½·Jr·dq1²
+%    This is EXACT — no need for translational + rotational separation.
 %
-%  Link 2 CoM z-coordinate depends on q2.
+%  Pendulum translation:
+%    T_pend_trans = ½·mp·|v2|²
+%
+%  Pendulum rotation about its own CoM:
+%    The pendulum angular velocity has two components:
+%      ω = dq1·ẑ + dq2·k̂   where k̂ = [cos(q1), sin(q1), 0]
+%
+%    The pendulum is a thin rod along the direction:
+%      rod = [sin(q2)·sin(q1), -sin(q2)·cos(q1), cos(q2)]
+%
+%    About the rod axis:   I_axial ≈ ½·mp·r² ≈ 0  (negligible)
+%    About transverse axes: I_perp = Jp_com = Jp - mp·hLp²
+%
+%    Rotational KE = ½·I_axial·ω_axial² + ½·I_perp·ω_perp²
+%                  ≈ ½·Jp_com·(|ω|² - ω_axial²)
+%
+%    Since ẑ·k̂ = 0: |ω|² = dq1² + dq2²
+%    ω_axial = ω·rod = dq1·cos(q2) (since k̂·rod = 0)
+%    ω_perp² = dq1² + dq2² - dq1²·cos²(q2) = dq1²·sin²(q2) + dq2²
+%
+%    T_pend_rot = ½·Jp_com·(dq1²·sin²(q2) + dq2²)
 
-fprintf('  Step 7: Potential energy\n');
+fprintf('  Step 4: Kinetic energy\n');
+fprintf('  ──────────────────────\n');
+
+% --- Arm kinetic energy (using measured Jr directly) ---
+T_arm = sym(1)/2 * Jr_s * dq1^2;
+
+% --- Pendulum translational KE ---
+v2_sq = simplify(v1.' * v1);  % wait, this should be v2
+v2_sq = simplify(v2.' * v2);
+T_pend_trans = sym(1)/2 * mp_s * v2_sq;
+
+% --- Pendulum rotational KE about CoM ---
+% Angular velocity components
+omega_sq = dq1^2 + dq2^2;               % |ω|²
+omega_axial_sq = dq1^2 * cos(q2)^2;     % (ω · rod)²
+omega_perp_sq = omega_sq - omega_axial_sq;  % dq1²·sin²(q2) + dq2²
+T_pend_rot = sym(1)/2 * Jp_com_s * omega_perp_sq;
+
+% --- Total KE ---
+T_total = T_arm + T_pend_trans + T_pend_rot;
+T_total = simplify(expand(T_total));
+
+fprintf('  T_arm       = ½·Jr·θ̇²\n');
+fprintf('  T_pend_trans = ½·mp·|v₂|²\n');
+fprintf('  T_pend_rot  = ½·Jp_com·(θ̇²·sin²α + α̇²)\n');
+fprintf('  T_total (symbolic):\n');
+disp(T_total);
+
+%% ====================================================================
+%  5. EXTRACT MASS MATRIX M(q) from T = ½·dq'·M(q)·dq
+%  ====================================================================
+fprintf('  Step 5: Mass matrix M(q)\n');
 fprintf('  ────────────────────────\n');
 
-% z-coordinates of CoMs
-z1 = p1_com(3);
-z2 = p2_com(3);
+% M(q) can be extracted from T by noting T = ½·dq'·M·dq
+% M_ij = d²T / (d(dqi)·d(dqj))
+M11_sym = diff(diff(T_total, dq1), dq1);
+M12_sym = diff(diff(T_total, dq1), dq2);
+M22_sym = diff(diff(T_total, dq2), dq2);
 
-V_sym = m1_val * g_sym * z1 + m2_val * g_sym * z2;
+M_sym = [M11_sym, M12_sym; M12_sym, M22_sym];
+M_sym = simplify(M_sym);
+
+fprintf('  M(q) =\n'); disp(M_sym);
+
+%% ====================================================================
+%  6. POTENTIAL ENERGY
+%  ====================================================================
+fprintf('  Step 6: Potential energy\n');
+fprintf('  ────────────────────────\n');
+
+% Only the pendulum has height-dependent PE (arm is horizontal)
+V_sym = mp_s * g_sym * p2_com(3);
 V_sym = simplify(V_sym);
 
+fprintf('  V = mp·g·hLp·cos(q2)\n');
 fprintf('  V = '); disp(V_sym);
-fprintf('\n');
 
 %% ====================================================================
-%  8. EULER-LAGRANGE EQUATIONS
+%  7. EULER-LAGRANGE EQUATIONS
 %  ====================================================================
-%
-%  L = T - V
 %
 %  d/dt(∂L/∂dq_i) - ∂L/∂q_i = Q_i
+%  where Q = [tau1; 0]
 %
-%  Where Q = [tau1; 0] (motor torque on joint 1, no external torque on joint 2)
-%
-%  This gives:  M(q) * ddq + C(q,dq) * dq + G(q) = Q
-%
-%  We compute this symbolically using the Christoffel symbols or
-%  by direct differentiation.
+%  Equivalently: M(q)·ddq + h(q,dq) = Q
+%  where h = C(q,dq)·dq + G(q)  (Coriolis/centrifugal + gravity)
 
-fprintf('  Step 8: Euler-Lagrange equations\n');
+fprintf('  Step 7: Euler-Lagrange equations\n');
 fprintf('  ─────────────────────────────────\n');
 
-% Lagrangian
-T_kin = (1/2) * dq.' * M_sym * dq;
-L_sym = T_kin - V_sym;
+L = T_total - V_sym;
 
-% Generalised forces
-Q = [tau1; 0];
-
-% E-L equations: d/dt(∂L/∂dq) - ∂L/∂q = Q
 % ∂L/∂dq
-dL_ddq = simplify(jacobian(L_sym, dq).');  % column vector (2x1)
+dL_ddq1 = diff(L, dq1);
+dL_ddq2 = diff(L, dq2);
+
+% d/dt(∂L/∂dq) — substitute dq→ddq using chain rule
+% Time derivative: replace q→dq, dq→ddq in the expression
+ddt_dL_ddq1 = diff(dL_ddq1, q1)*dq1 + diff(dL_ddq1, q2)*dq2 ...
+            + diff(dL_ddq1, dq1)*ddq1 + diff(dL_ddq1, dq2)*ddq2;
+ddt_dL_ddq2 = diff(dL_ddq2, q1)*dq1 + diff(dL_ddq2, q2)*dq2 ...
+            + diff(dL_ddq2, dq1)*ddq1 + diff(dL_ddq2, dq2)*ddq2;
 
 % ∂L/∂q
-dL_dq = simplify(jacobian(L_sym, q).');    % column vector (2x1)
+dL_dq1 = diff(L, q1);
+dL_dq2 = diff(L, q2);
 
-% d/dt(∂L/∂dq) requires chain rule:
-%   d/dt(f(q,dq)) = ∂f/∂q * dq + ∂f/∂dq * ddq
-ddq_vec = [ddq1; ddq2];
+% EL equations: d/dt(∂L/∂dq_i) - ∂L/∂q_i = Q_i
+EL1 = simplify(ddt_dL_ddq1 - dL_dq1 - tau1);   % = 0
+EL2 = simplify(ddt_dL_ddq2 - dL_dq2);           % = 0
 
-% Time derivative of ∂L/∂dq
-dt_dL_ddq = jacobian(dL_ddq, q) * dq + jacobian(dL_ddq, dq) * ddq_vec;
-dt_dL_ddq = simplify(dt_dL_ddq);
+fprintf('  EL(1) [θ equation] = 0:\n');
+disp(EL1);
+fprintf('  EL(2) [α equation] = 0:\n');
+disp(EL2);
 
-% Full E-L equation: dt_dL_ddq - dL_dq = Q
-EL = simplify(dt_dL_ddq - dL_dq - Q);
+% Extract gravity vector G(q) = -∂V/∂q  (appears as ∂L/∂q from V part)
+G_vec = [-diff(V_sym, q1); -diff(V_sym, q2)];
+G_vec = simplify(G_vec);
 
-fprintf('  EL equations (= 0):\n');
-fprintf('  EL(1) [theta]: '); disp(EL(1));
-fprintf('  EL(2) [alpha]: '); disp(EL(2));
+fprintf('  Gravity vector G(q) = -dV/dq:\n');
+disp(G_vec);
 
-%% ====================================================================
-%  9. EXTRACT M(q), C(q,dq), G(q)
-%  ====================================================================
-%
-%  EL = M*ddq + (everything else) = 0
-%  M*ddq = Q - C*dq - G
-%
-%  We already have M_sym. Extract C and G:
-
-% Gravity vector: G = -∂V/∂q
-G_sym = simplify(jacobian(V_sym, q).');
-
-fprintf('  Gravity vector G(q):\n');
-disp(G_sym);
-
-% Coriolis/centripetal: extract from EL - M*ddq - G
-% C*dq = (EL + Q - G) evaluated with ddq=0... actually let's just
-% collect terms. The full EOM is:
-%   M * ddq + h(q, dq) = Q
-% where h = C*dq + G
-
-% Let's verify by substituting ddq=0 and tau=0:
-h_sym = simplify(subs(EL + Q, [ddq1, ddq2], [0, 0]));
-fprintf('  h(q,dq) = C*dq + G:\n');
-disp(h_sym);
+% Coriolis + centrifugal: h = M·ddq terms subtracted from EL, minus G
+% We can also get h(q,dq) from the Christoffel symbols, but let's
+% just identify it from the EL equations
 
 %% ====================================================================
-%  10. LINEARISE AT UPRIGHT EQUILIBRIUM
+%  8. LINEARISATION AT UPRIGHT EQUILIBRIUM
 %  ====================================================================
 %
-%  Equilibrium: q1=0, q2=0, dq1=0, dq2=0, tau1=0
-%  (q2=0 means upright in our convention)
+%  Equilibrium: q1=0, q2=0 (upright), dq1=0, dq2=0
 %
-%  Linearised EOM:  M0 * ddq + C0 * dq + G0_lin * q = B0 * u
+%  The EOM is:  M(q)·ddq + C(q,dq)·dq + G(q) = [tau; 0]
 %
-%  State vector: x = [q1; q2; dq1; dq2]
-%  A = [0, I; -M0\G0_lin, -M0\C0]  (after adding motor dynamics)
+%  Linearising:
+%    M(0)·ddq + dG/dq|₀ · q = [tau; 0]
+%  (Coriolis terms vanish at zero velocity)
+%
+%  → ddq = M⁻¹·([tau;0] - dG/dq·q)
+%
+%  State x = [q1, q2, dq1, dq2]:
+%    A_tau = [0, 0, I, 0; 0, 0, 0, I; 0, -M⁻¹·dG/dq(1,:), 0, 0; ...]
+%    B_tau = [0; 0; M⁻¹·[1;0]]
 
-fprintf('  Step 10: Linearisation at upright equilibrium\n');
+fprintf('\n  Step 8: Linearisation at upright equilibrium\n');
 fprintf('  ──────────────────────────────────────────────\n');
 
-eq_point = [q1, 0; q2, 0; dq1, 0; dq2, 0; tau1, 0];
+% Substitute numeric values
+subs_list = {Lr, hLp, mp_s, Jr_s, Jp_s, Jp_com_s, g_sym};
+vals_list = {Lr_val, hLp_val, mp_val, Jr_val, Jp_val, Jp_com_val, g_val};
 
-% Mass matrix at equilibrium
-M0 = double(subs(M_sym, [q1, q2, hLp, Lr, g_sym], ...
-                         [0, 0, hLp_val, Lr_val, g_val]));
+% Mass matrix at equilibrium (q2 = 0)
+M_eq = double(subs(M_sym, [subs_list{:}, q1, q2, dq1, dq2], ...
+                           [vals_list{:}, 0, 0, 0, 0]));
 
 fprintf('  M(q) at equilibrium:\n');
-disp(M0);
-fprintf('  M(1,1) = %.4e   (Jt equivalent)\n', M0(1,1));
-fprintf('  M(1,2) = %.4e   (-mp·hLp·Lr equivalent)\n', M0(1,2));
-fprintf('  M(2,2) = %.4e   (Jp equivalent)\n', M0(2,2));
-fprintf('\n');
+disp(M_eq);
+fprintf('  M(1,1) = %.4e   (should be Jt = Jr + mp·Lr²)\n', M_eq(1,1));
+fprintf('  M(1,2) = %.4e   (should be -mp·hLp·Lr)\n', M_eq(1,2));
+fprintf('  M(2,2) = %.4e   (should be Jp)\n', M_eq(2,2));
 
-% Gravity linearisation: G(q) ≈ G_lin * q  (G at equilibrium is zero
-% for q2=0 upright if we define V correctly, but dG/dq is nonzero)
-G0 = double(subs(G_sym, [q1, q2, hLp, Lr, g_sym], ...
-                         [0, 0, hLp_val, Lr_val, g_val]));
-fprintf('  G at equilibrium: '); disp(G0.');
+% Verify against expected values
+M11_expected = Jt_val;
+M12_expected = -mp_val * hLp_val * Lr_val;
+M22_expected = Jp_val;
+fprintf('\n  Expected (from shortcut):\n');
+fprintf('    M11 = Jt        = %.4e\n', M11_expected);
+fprintf('    M12 = -mp·hLp·Lr = %.4e\n', M12_expected);
+fprintf('    M22 = Jp        = %.4e\n', M22_expected);
 
-% Jacobian of G w.r.t. q (gravity stiffness)
-dG_dq = jacobian(G_sym, q);
-G_lin = double(subs(dG_dq, [q1, q2, hLp, Lr, g_sym], ...
-                            [0, 0, hLp_val, Lr_val, g_val]));
-fprintf('  dG/dq (gravity stiffness) at equilibrium:\n');
-disp(G_lin);
+err_M11 = abs(M_eq(1,1) - M11_expected);
+err_M12 = abs(M_eq(1,2) - M12_expected);
+err_M22 = abs(M_eq(2,2) - M22_expected);
+fprintf('\n  Errors: |ΔM11|=%.2e  |ΔM12|=%.2e  |ΔM22|=%.2e\n\n', ...
+        err_M11, err_M12, err_M22);
 
-% Coriolis at equilibrium (all velocity terms vanish)
-% But we need damping-like terms from Coriolis — at eq they're zero
-% since dq=0. The linearised C contribution is zero.
+% Gravity stiffness: dG/dq at equilibrium
+dGdq = double(subs(jacobian(G_vec, q), [subs_list{:}, q1, q2], ...
+                                         [vals_list{:}, 0, 0]));
 
-% Input matrix
-B0_tau = [1; 0];  % torque on joint 1 only
+fprintf('  Gravity stiffness dG/dq at equilibrium:\n');
+disp(dGdq);
+fprintf('  dG/dq(2,2) = %.4f  (should be -mp·g·hLp = %.4f)\n', ...
+        dGdq(2,2), -mp_val*g_val*hLp_val);
 
-% ── Build state-space (torque input) ────────────────────────────
-% x = [q1; q2; dq1; dq2]
-% dx = [dq1; dq2; ddq1; ddq2]
-% M0 * [ddq1; ddq2] = -G_lin * [q1; q2] + B0_tau * tau
-% [ddq1; ddq2] = -M0\G_lin * [q1; q2] + M0\B0_tau * tau
-
+% Build state-space matrices (torque input)
+Minv = inv(M_eq);
 A_tau = [zeros(2), eye(2);
-         -M0 \ G_lin, zeros(2)];
+         -Minv * dGdq, zeros(2)];
+B_tau = [0; 0; Minv * [1; 0]];
 
-B_tau = [zeros(2,1);
-         M0 \ B0_tau];
-
-fprintf('============================================================\n');
+fprintf('\n============================================================\n');
 fprintf('  STATE-SPACE WITH TORQUE INPUT (from full E-L derivation)\n');
 fprintf('============================================================\n');
-fprintf('A_τ =\n'); disp(A_tau);
-fprintf('B_τ = '); fprintf('%.4f  ', B_tau); fprintf('\n\n');
+fprintf('A_τ =\n');
+disp(A_tau);
+fprintf('B_τ = ');
+fprintf('%.4f  ', B_tau);
+fprintf('\n\n');
 
 %% ====================================================================
-%  11. TORQUE → VOLTAGE CONVERSION
+%  9. TORQUE → VOLTAGE CONVERSION
 %  ====================================================================
-fprintf('  Step 11: Torque → voltage conversion\n');
+%
+%  Motor: Vm = Rm/km · τ + km · θ̇
+%  So: τ = km/Rm · Vm - km²/Rm · θ̇
+%
+%  Substituting into state equation:
+%    B_V = (km/Rm) · B_τ
+%    A_V = A_τ  but add back-EMF damping:
+%      A_V(3,3) -= km²/Rm · B_τ(3)
+%      A_V(4,3) -= km²/Rm · B_τ(4)
+
+fprintf('  Step 9: Torque → voltage conversion\n');
 fprintf('  ──────────────────────────────────────\n');
 
-km = km_val;
-Rm = Rm_val;
+A_V = A_tau;
+B_V = (km_val / Rm_val) * B_tau;
+back_emf = km_val^2 / Rm_val;
+A_V(3,3) = A_V(3,3) - back_emf * B_tau(3);
+A_V(4,3) = A_V(4,3) - back_emf * B_tau(4);
 
-A_volt = A_tau;
-A_volt(3,3) = A_tau(3,3) - (km^2 / Rm) * B_tau(3);
-A_volt(4,3) = A_tau(4,3) - (km^2 / Rm) * B_tau(4);
-
-B_volt = (km / Rm) * B_tau;
-
-fprintf('============================================================\n');
+fprintf('\n============================================================\n');
 fprintf('  STATE-SPACE WITH VOLTAGE INPUT (from full E-L derivation)\n');
 fprintf('============================================================\n');
-fprintf('A_V =\n'); disp(A_volt);
-fprintf('B_V = '); fprintf('%.6f  ', B_volt); fprintf('\n\n');
+fprintf('A_V =\n');
+disp(A_V);
+fprintf('B_V = ');
+fprintf('%f  ', B_V);
+fprintf('\n\n');
 
-% Open-loop poles
-ol_poles = eig(A_volt);
+poles_ol = eig(A_V);
 fprintf('Open-loop poles:\n');
-for i = 1:length(ol_poles)
-    if abs(imag(ol_poles(i))) < 1e-6
-        fprintf('  s = %+.4f\n', real(ol_poles(i)));
-    else
-        fprintf('  s = %+.4f %+.4fj\n', real(ol_poles(i)), imag(ol_poles(i)));
-    end
+for i = 1:length(poles_ol)
+    fprintf('  s = %+.4f\n', poles_ol(i));
 end
-fprintf('\n');
 
 %% ====================================================================
-%  12. COMPARE WITH pole_placement.m (shortcut method)
+%  10. COMPARISON WITH SHORTCUT (pole_placement.m)
 %  ====================================================================
-fprintf('============================================================\n');
+fprintf('\n============================================================\n');
 fprintf('  COMPARISON: Full E-L vs Shortcut (pole_placement.m)\n');
-fprintf('============================================================\n\n');
+fprintf('============================================================\n');
 
-% Shortcut method (what pole_placement.m does)
-Jt_sc  = Jr_val + m2_val * Lr_val^2;
-M11_sc = Jt_sc;
-M12_sc = -m2_val * hLp_val * Lr_val;
-M22_sc = Jp_val;
-det_sc = M11_sc * M22_sc - M12_sc^2;
+% Rebuild shortcut A, B for comparison
+Rm  = Rm_val; km = km_val;
+Jr  = Jr_val; Lr = Lr_val;
+mp  = mp_val; Lp = Lp_val; Jp = Jp_val; g = g_val;
+hLp_n = Lp/2;
+Jt  = Jr + mp*Lr^2;
+M11s = Jt;
+M12s = -mp*hLp_n*Lr;
+M22s = Jp;
+det_Ms = M11s*M22s - M12s^2;
 
-A_tau_sc = [0, 0, 1, 0;
-            0, 0, 0, 1;
-            0, -M12_sc*m2_val*hLp_val*g_val / det_sc,  0,  0;
-            0,  M11_sc*m2_val*hLp_val*g_val / det_sc,  0,  0];
+A_tau_s = [0, 0, 1, 0;
+           0, 0, 0, 1;
+           0, -M12s*mp*hLp_n*g / det_Ms, 0, 0;
+           0,  M11s*mp*hLp_n*g / det_Ms, 0, 0];
+B_tau_s = [0; 0; M22s/det_Ms; -M12s/det_Ms];
 
-B_tau_sc = [0; 0; M22_sc/det_sc; -M12_sc/det_sc];
+A_V_s = A_tau_s;
+B_V_s = (km/Rm) * B_tau_s;
+bemf  = km^2/Rm;
+A_V_s(3,3) = A_V_s(3,3) - bemf * B_tau_s(3);
+A_V_s(4,3) = A_V_s(4,3) - bemf * B_tau_s(4);
 
-A_volt_sc = A_tau_sc;
-A_volt_sc(3,3) = A_tau_sc(3,3) - (km^2/Rm) * B_tau_sc(3);
-A_volt_sc(4,3) = A_tau_sc(4,3) - (km^2/Rm) * B_tau_sc(4);
-B_volt_sc = (km/Rm) * B_tau_sc;
+fprintf('\n  A_volt (full E-L):\n');   disp(A_V);
+fprintf('  A_volt (shortcut):\n');     disp(A_V_s);
+fprintf('  B_volt (full E-L):  '); fprintf('%f  ', B_V); fprintf('\n');
+fprintf('  B_volt (shortcut):  '); fprintf('%f  ', B_V_s); fprintf('\n\n');
 
-fprintf('  A_volt (full E-L):\n'); disp(A_volt);
-fprintf('  A_volt (shortcut):\n'); disp(A_volt_sc);
+fprintf('  A difference (full - shortcut):\n');
+disp(A_V - A_V_s);
+fprintf('  B difference (full - shortcut): ');
+fprintf('%.6e  ', B_V - B_V_s);
+fprintf('\n\n');
 
-fprintf('  B_volt (full E-L):  '); fprintf('%.6f  ', B_volt); fprintf('\n');
-fprintf('  B_volt (shortcut):  '); fprintf('%.6f  ', B_volt_sc); fprintf('\n\n');
-
-% Element-wise difference
-A_diff = A_volt - A_volt_sc;
-B_diff = B_volt - B_volt_sc;
-fprintf('  A difference (full - shortcut):\n'); disp(A_diff);
-fprintf('  B difference (full - shortcut): '); fprintf('%.6e  ', B_diff); fprintf('\n\n');
-
-% Identify what's different
-fprintf('  Key mass matrix comparison:\n');
-fprintf('    Full E-L:   M11=%.4e  M12=%.4e  M22=%.4e\n', M0(1,1), M0(1,2), M0(2,2));
-fprintf('    Shortcut:   M11=%.4e  M12=%.4e  M22=%.4e\n', M11_sc, M12_sc, M22_sc);
-fprintf('    Difference: M11=%+.4e  M12=%+.4e  M22=%+.4e\n', ...
-        M0(1,1)-M11_sc, M0(1,2)-M12_sc, M0(2,2)-M22_sc);
-fprintf('\n');
-fprintf('  The difference in M11 comes from the link 1 inertia terms\n');
-fprintf('  (encoder disc, arm rod transverse inertia) that the shortcut\n');
-fprintf('  method lumps into Jr.\n\n');
+% Check if they match
+tol = 1e-6;
+if max(abs(A_V(:) - A_V_s(:))) < tol && max(abs(B_V - B_V_s)) < tol
+    fprintf('  ✓ MATCH: Full E-L and shortcut produce identical A, B matrices.\n\n');
+else
+    fprintf('  ✗ MISMATCH: See differences above.\n\n');
+end
 
 %% ====================================================================
-%  13. POLE PLACEMENT WITH BOTH MODELS
+%  11. POLE PLACEMENT
 %  ====================================================================
 fprintf('============================================================\n');
 fprintf('  POLE PLACEMENT COMPARISON\n');
 fprintf('============================================================\n\n');
 
-poles_vc = [-3, -4, -10, -15];
-poles_c  = [-5, -7, -20, -30];
+pole_sets = {
+    [-3, -4, -10, -15],   'Very conservative';
+    [-5, -6, -15, -25],   'Conservative';
+    [-8, -10, -20, -30],  'Moderate';
+    [-10, -15, -25, -40], 'Aggressive';
+};
 
-for method = {'Full E-L', 'Shortcut'}
-    if strcmp(method{1}, 'Full E-L')
-        A_use = A_volt; B_use = B_volt;
-    else
-        A_use = A_volt_sc; B_use = B_volt_sc;
+for i = 1:size(pole_sets, 1)
+    poles = pole_sets{i, 1};
+    label = pole_sets{i, 2};
+
+    fprintf('── %s: poles = [%s] ──\n', label, num2str(poles));
+
+    % Full E-L
+    try
+        K_full = place(A_V, B_V, poles);
+        fprintf('  Full E-L:  K = [%.4f, %.4f, %.4f, %.4f]\n', K_full);
+
+        eig_cl = eig(A_V - B_V * K_full);
+        fprintf('  CL poles:  [');
+        fprintf('%.2f ', eig_cl);
+        fprintf(']\n');
+    catch ME
+        fprintf('  Full E-L:  FAILED — %s\n', ME.message);
     end
 
-    fprintf('── %s ──\n', method{1});
-    for p_idx = 1:2
-        if p_idx == 1
-            poles = poles_vc; pname = 'Very conservative';
-        else
-            poles = poles_c; pname = 'Conservative';
-        end
+    % Shortcut
+    try
+        K_short = place(A_V_s, B_V_s, poles);
+        fprintf('  Shortcut:  K = [%.4f, %.4f, %.4f, %.4f]\n', K_short);
 
-        K = place(A_use, B_use, poles);
-        fprintf('  %s poles [%s]:\n', pname, num2str(poles));
-        fprintf('    K = [%.4f, %.4f, %.4f, %.4f]\n', K);
-        fprintf('         k_θ      k_α      k_θ̇      k_α̇\n');
-
-        % Voltage at 5°
-        x5 = [0; 5*pi/180; 0; 0];
-        fprintf('    Vm at 5°: %.2f V\n\n', abs(-K*x5));
+        eig_cl = eig(A_V_s - B_V_s * K_short);
+        fprintf('  CL poles:  [');
+        fprintf('%.2f ', eig_cl);
+        fprintf(']\n');
+    catch ME
+        fprintf('  Shortcut:  FAILED — %s\n', ME.message);
     end
+
+    % Compare
+    if exist('K_full', 'var') && exist('K_short', 'var')
+        fprintf('  Difference: [');
+        fprintf('%.6f ', K_full - K_short);
+        fprintf(']\n');
+    end
+
+    fprintf('\n');
+    clear K_full K_short;
 end
 
-fprintf('Done.\n');
+%% ====================================================================
+%  12. PHYSICAL INTERPRETATION OF THE MASS MATRIX
+%  ====================================================================
+fprintf('============================================================\n');
+fprintf('  PHYSICAL INTERPRETATION\n');
+fprintf('============================================================\n\n');
+
+fprintf('  At the upright equilibrium (q2=0), the linearised EOM is:\n');
+fprintf('    [Jt,          -mp·hLp·Lr] [θ̈]   [0           ] [θ]   [τ]\n');
+fprintf('    [-mp·hLp·Lr,  Jp        ] [α̈] + [-mp·g·hLp·α ] [α] = [0]\n\n');
+
+fprintf('  M11 = Jt = Jr + mp·Lr²\n');
+fprintf('    Jr: measured inertia of arm assembly about motor shaft\n');
+fprintf('    mp·Lr²: pendulum mass at arm tip (parallel-axis to motor)\n');
+fprintf('    → total inertia that θ̈ must overcome\n\n');
+
+fprintf('  M12 = -mp·hLp·Lr  (coupling)\n');
+fprintf('    When the arm accelerates (θ̈), it creates a torque on the\n');
+fprintf('    pendulum through the lever arm hLp at distance Lr from motor.\n');
+fprintf('    The minus sign reflects the geometry: arm acceleration in +θ\n');
+fprintf('    tends to tilt the pendulum in -α (reaction torque).\n\n');
+
+fprintf('  M22 = Jp  (pivot-frame)\n');
+fprintf('    Total pendulum inertia about its pivot point.\n');
+fprintf('    Using pivot-frame Jp directly (no +mp·hLp² needed because\n');
+fprintf('    the measured Jp already includes the parallel-axis term).\n\n');
+
+fprintf('  The fact that Jp_com = Jp - mp·hLp² = %.4e > 0 confirms\n', Jp_com_val);
+fprintf('  physical consistency: the measured Jp is larger than the\n');
+fprintf('  translational contribution mp·hLp² = %.4e alone.\n\n', mp_val*hLp_val^2);
+
+fprintf('  ──────────────────────────────────────────────────\n');
+fprintf('  WHY THE ORIGINAL DH-BASED DERIVATION FAILED:\n');
+fprintf('  ──────────────────────────────────────────────────\n');
+fprintf('  1. DH gave z_com = 0 for the pendulum → V = 0 → no gravity\n');
+fprintf('     (both joints appeared to rotate about z, everything in x-y plane)\n');
+fprintf('  2. Jr and Jp were used as body-frame CoM inertias, but the\n');
+fprintf('     Jacobian method needs I_com. This double-counted parallel-axis\n');
+fprintf('     terms, inflating M11 by %.1f%%.\n', ...
+        100*(6.3284e-4 - M11_expected)/M11_expected);
+fprintf('  3. Without gravity, the open-loop system had 4 poles at 0\n');
+fprintf('     and was uncontrollable → place() failed.\n');
