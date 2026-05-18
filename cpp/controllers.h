@@ -164,7 +164,7 @@ struct BalanceController {
         // so output is negative. Correct.
         // when using pidtune on the transfer function (low B matrix, meaning voltage is the input), K_i = 1.58e+05
         alpha_pid.Kp = 0.0;   // [V / rad]
-        alpha_pid.Ki = 0.0;   // [V / (rad·s)] — steady-state correction
+        alpha_pid.Ki = 1.58e+05;   // [V / (rad·s)] — steady-state correction
         alpha_pid.Kd = 0.0;   // D handled separately via measured velocity
         alpha_pid.integral_limit = 0.5;  // anti-windup [rad·s]
         alpha_pid.output_limit   = voltage_limit;
@@ -181,19 +181,22 @@ struct BalanceController {
 
 
         place_gains.k_theta1 = -0.003; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
-        place_gains.k_theta2 = 248.88; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
+        place_gains.k_theta2 = 648.88; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
         place_gains.k_thetadot1 = -18.12; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
         place_gains.k_thetadot2 = -53.142; // the gains given from matlab are all negative except for the big one, theta2. 
 
+        //integral term for the arm to go back to zero. 
+        place_gains.k_integral = 5; // increase this value if gains from PLACE gets the arm to a bad angle. 
+
         // but the system becomes stable if the last gain is positive.
 
-        // ── Theta PI (arm — secondary) ─────────────────────────
+        // ── Theta PI (arm — secondaxry) ─────────────────────────
         // This is NOT a centering controller. It moves the base
         // under the pendulum. The sign is handled in compute():
         // we SUBTRACT theta_pid output instead of adding it.
         //increasing the two values below seems to make an improvement to the arm, but introduces less stability to the pendulum.
         theta_pid.Kp = 0.0;    // [V / rad] // higher value makes theta for arm deviate less from zero, but pendulum deviates more
-        theta_pid.Ki = 1.58e+05;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
+        theta_pid.Ki = 0.0;    // [V / (rad·s)] — steady-state correction // minus sign seems to push arm towards zero degrees
         theta_pid.Kd = 0.0;  // D handled separately via measured velocity
         theta_pid.integral_limit = 0.5;
         theta_pid.output_limit   = voltage_limit;
@@ -238,8 +241,13 @@ struct BalanceController {
     double compute_from_gains(const QubeState& s){
         //this segment can be used to compute voltage based of the 4 gains gotten from pole placement
         //or LQR.
+
+
         double u = -(place_gains.k_theta1 * s.theta + place_gains.k_theta2 * s.alpha
-                     + place_gains.k_thetadot1 * s.theta_dot - place_gains.k_thetadot2 * s.alpha_dot);
+                     + place_gains.k_thetadot1 * s.theta_dot + place_gains.k_thetadot2 * s.alpha_dot);
+        //add integrator term for arm angle.
+        //u += s.theta * place_gains.k_integral; // this is an attempt to add an integral term for the arm angle, to get it back to zero. this seems to help a bit, but when the gain is too high, the system becomes unstable, with the arm and pendulum oscilating more and more.
+        
         u = compensate_deadband(u);
         return clamp(u, -voltage_limit, voltage_limit);
     }
