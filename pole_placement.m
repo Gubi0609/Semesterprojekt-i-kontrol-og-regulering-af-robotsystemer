@@ -124,13 +124,25 @@ unstable_pole = max(real(ol_poles));
 fprintf('  Unstable OL pole at s = +%.2f rad/s\n', unstable_pole);
 fprintf('  → CL poles must be faster than this.\n\n');
 
-poles_quanser      = [-2.8+2.86j, -2.8-2.86j, -30, -40];
-poles_moderate     = [-10, -12, -25, -35];
-poles_aggressive   = [-15, -20, -40, -50];
-poles_conservative = [-5, -7, -20, -30];
+% ── Pole selection guidelines ────────────────────────────────────
+%  - Unstable OL pole is at ~+13 rad/s (see above)
+%  - ALL CL poles must be in LHP (negative real part)
+%  - Dominant poles (slowest) set the transient response
+%  - Fast poles handle coupling, should be 3-5× faster than dominant
+%  - More negative = faster response but higher gains & voltage
+%
+%  Rule of thumb: dominant poles at 1-2× the OL unstable pole
+%  magnitude give moderate performance. Slower than that and
+%  the controller barely overcomes the instability.
 
-all_pole_sets = {poles_quanser, poles_moderate, poles_aggressive, poles_conservative};
-set_names = {'Quanser-suggested', 'Moderate', 'Aggressive', 'Conservative'};
+poles_very_conservative = [-3, -4, -10, -15];      % very gentle
+poles_conservative      = [-5, -7, -20, -30];      % gentle
+poles_quanser           = [-2.8+2.86j, -2.8-2.86j, -30, -40]; % Quanser workbook
+poles_moderate          = [-10, -12, -25, -35];     % moderate
+poles_aggressive        = [-15, -20, -40, -50];     % aggressive (will saturate)
+
+all_pole_sets = {poles_very_conservative, poles_conservative, poles_quanser, poles_moderate, poles_aggressive};
+set_names = {'Very conservative', 'Conservative', 'Quanser-suggested', 'Moderate', 'Aggressive'};
 K_results = cell(size(all_pole_sets));
 
 for i = 1:length(all_pole_sets)
