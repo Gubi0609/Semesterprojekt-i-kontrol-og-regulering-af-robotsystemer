@@ -200,10 +200,10 @@ struct BalanceController {
     // Measured Jr=6.2e-5, Jp=1.26e-4
     //
     // From PendulumModel E-L with CoM inertias, poles [-3,-4,-10,-15]:
-    static constexpr double K_theta     = -0.3595;
-    static constexpr double K_alpha     = 26.0638;
-    static constexpr double K_theta_dot = -0.5296;
-    static constexpr double K_alpha_dot =  1.4455;
+    static constexpr double K_theta     = -1.0;
+    static constexpr double K_alpha     = 20.0413;
+    static constexpr double K_theta_dot = -0.3499;
+    static constexpr double K_alpha_dot =  0.9201;
     //
     // Conservative poles [-5, -7, -20, -30]:
     // static constexpr double K_theta     = -2.9866;
