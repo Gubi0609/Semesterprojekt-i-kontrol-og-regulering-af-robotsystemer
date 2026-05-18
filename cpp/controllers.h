@@ -196,9 +196,9 @@ struct BalanceController {
     //
     // From PendulumModel E-L with CoM inertias, poles [-3,-4,-10,-15]:
     static constexpr double K_theta     = -0.1311;
-    static constexpr double K_alpha     = 18.6266;
-    static constexpr double K_theta_dot = -0.2051;
-    static constexpr double K_alpha_dot =  1.6360;
+    static constexpr double K_alpha     = 20.0413;
+    static constexpr double K_theta_dot = -0.3499;
+    static constexpr double K_alpha_dot =  0.9201;
     //
     // Conservative poles [-5, -7, -20, -30]:
     // static constexpr double K_theta     = -2.9866;
