@@ -180,10 +180,10 @@ struct BalanceController {
         // gains from place [-0.01, -0.1, -20, -200]: [-0.003	648.88	-18.12	-53.142] // more agressive pole placement, fewer large osscilations - 
 
 
-        place_gains.k_theta1 = -0.003; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
-        place_gains.k_theta2 = 648.88; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
-        place_gains.k_thetadot1 = -18.12; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
-        place_gains.k_thetadot2 = -53.142; // the gains given from matlab are all negative except for the big one, theta2. 
+        place_gains.k_theta1 = -0.0313; // the gain for the arm angle, theta. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
+        place_gains.k_theta2 = 255.1668; // the gain for the pendulum angle, alpha. increasing this value seems to make the pendulum deviate less from zero, but makes the arm deviate more.
+        place_gains.k_thetadot1 = -18.0568; // the gain for the arm angular velocity, theta_dot. increasing this value seems to make the arm deviate less from zero, but makes the pendulum deviate more.
+        place_gains.k_thetadot2 = -111.2378; // the gains given from matlab are all negative except for the big one, theta2. 
 
         //integral term for the arm to go back to zero. 
         place_gains.k_integral = 5; // increase this value if gains from PLACE gets the arm to a bad angle. 
@@ -244,7 +244,7 @@ struct BalanceController {
 
 
         double u = -(place_gains.k_theta1 * s.theta + place_gains.k_theta2 * s.alpha
-                     + place_gains.k_thetadot1 * s.theta_dot + place_gains.k_thetadot2 * s.alpha_dot);
+                     + place_gains.k_thetadot1 * s.theta_dot - place_gains.k_thetadot2 * s.alpha_dot);
         //add integrator term for arm angle.
         //u += s.theta * place_gains.k_integral; // this is an attempt to add an integral term for the arm angle, to get it back to zero. this seems to help a bit, but when the gain is too high, the system becomes unstable, with the arm and pendulum oscilating more and more.
         
