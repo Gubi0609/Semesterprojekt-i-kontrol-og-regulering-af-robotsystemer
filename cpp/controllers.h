@@ -194,11 +194,11 @@ struct BalanceController {
     // Pole placement gains from pole_placement.m (pivot-frame, voltage-input)
     // Measured Jr=6.2e-5, Jp=1.26e-4
     //
-    // Very conservative poles [-3, -4, -10, -15]:
-    static constexpr double K_theta     = -0.25;
-    static constexpr double K_alpha     = 10.7;
-    static constexpr double K_theta_dot = -0.23;
-    static constexpr double K_alpha_dot =  0.73;
+    // From PendulumModel E-L with CoM inertias, poles [-3,-4,-10,-15]:
+    static constexpr double K_theta     = -0.1311;
+    static constexpr double K_alpha     = 18.6266;
+    static constexpr double K_theta_dot = -0.2051;
+    static constexpr double K_alpha_dot =  1.6360;
     //
     // Conservative poles [-5, -7, -20, -30]:
     // static constexpr double K_theta     = -2.9866;
