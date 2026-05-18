@@ -19,6 +19,11 @@
 #include <string>
 #include <vector>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846 // fallback if M_PI is not defined
+#endif
+
+
 int main(int argc, char** argv) {
     double duration    = 5.0;
     double dt          = 0.001;

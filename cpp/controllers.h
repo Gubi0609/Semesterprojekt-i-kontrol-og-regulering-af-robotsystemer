@@ -19,6 +19,11 @@
 #include "qube_types.h"
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846 // fallback if M_PI is not defined
+#endif
+
+
 // ─── Deadband compensation ─────────────────────────────────────────
 // The motor amplifier has a ~0.3V deadband. Any command below that
 // produces zero torque. We add the offset only when the command is

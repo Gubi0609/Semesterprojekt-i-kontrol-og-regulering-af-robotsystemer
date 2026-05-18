@@ -5,6 +5,13 @@
 
 #include <cmath>
 
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846 // fallback if M_PI is not defined
+#endif
+
+
+
 // ─── Encoder conversion ────────────────────────────────────────────
 // The Qube-Servo 3 has 512-line optical encoders decoded in 4X
 // quadrature mode, giving 2048 discrete positions per revolution.
