@@ -34,12 +34,12 @@ m_r = 0.095;                  % [kg] Mass of encoder and arm
 m_p = 0.024;                  % [kg] Mass of pendulum
 
 % Calculated intertia
-J_r = 1/3 * m_r * (l_encoder + l_arm)^2 + 1/4 * m_r * (r_encoder + r_arm)^2;
-J_p = 1/3 * m_p * l_p^2 + 1/4 * m_p * r_p^2;
+J_r = 6.2*10^-5;
+J_p = 1.26*10^-4; %messured inertia values
 
 % Estimated friction
-b_r = 0.1;
-b_p = 0.1;
+b_r = 0;
+b_p = 0;
 
 % Gravity
 gravity = 9.82; % [m/s^2]
@@ -255,7 +255,7 @@ fprintf('  POLE PLACEMENT (voltage input)\n');
 fprintf('============================================================\n\n');
 
 pole_sets = {
-    [-3, -4, -10, -15],   'Very conservative';
+    [-2, -2.5, -5, -7],   'Very conservative';
     [-5, -6, -15, -25],   'Conservative';
     [-8, -10, -20, -30],  'Moderate';
 };
