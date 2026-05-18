@@ -185,6 +185,37 @@ struct BalanceController {
         return clamp(u, -voltage_limit, voltage_limit);
     }
 
+    // ── State feedback from pole placement ───────────────────────
+    // u = -K·x = -(k_theta·θ + k_alpha·α + k_theta_dot·θ̇ + k_alpha_dot·α̇)
+    //
+    // Gains from pole_placement.m (pivot-frame, voltage-input model)
+    // with measured Jr=6.2e-5, Jp=1.26e-4.
+    //
+    // Pole placement gains from pole_placement.m (pivot-frame, voltage-input)
+    // Measured Jr=6.2e-5, Jp=1.26e-4
+    //
+    // Conservative poles [-5, -7, -20, -30]:
+    static constexpr double K_theta     = -2.9866;
+    static constexpr double K_alpha     = 28.5910;
+    static constexpr double K_theta_dot = -1.3149;
+    static constexpr double K_alpha_dot =  2.3016;
+    //
+    // Quanser-suggested poles [-2.8±2.86j, -30, -40] (faster, more aggressive):
+    // static constexpr double K_theta     = -2.7340;
+    // static constexpr double K_alpha     = 34.6427;
+    // static constexpr double K_theta_dot = -1.1572;
+    // static constexpr double K_alpha_dot =  2.3759;
+
+    double compute_from_gains(const QubeState& s) {
+        double u = -(K_theta     * s.theta
+                   + K_alpha     * s.alpha
+                   + K_theta_dot * s.theta_dot
+                   + K_alpha_dot * s.alpha_dot);
+
+        u = compensate_deadband(u);
+        return clamp(u, -voltage_limit, voltage_limit);
+    }
+
     void reset() {
         alpha_pid.reset();
         theta_pid.reset();

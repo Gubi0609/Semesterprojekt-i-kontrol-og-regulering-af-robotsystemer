@@ -26,7 +26,7 @@ inline State dynamics(const State& x, double Vm, const QubeParams& p) {
     // Mass matrix
     double M11 = p.Jt() + p.Jp * sin_a * sin_a;
     double M12 = -p.mp * hLp * p.Lr * cos_a;
-    double M22 = p.Jp + p.mp * hLp * hLp;
+    double M22 = p.Jp;  // pivot-frame: no + mp·hLp² (already in Jp)
 
     // Right-hand side
     double rhs1 = tau
